@@ -1,0 +1,25 @@
+# Exclude secrets
+.history/
+.env
+*.pem
+
+# Node modules
+node_modules/
+
+# Build output
+dist/
+
+# Local databases
+mongo-data/
+qdrant-data/
+
+# Logs
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Docker
+docker-compose.override.yml
