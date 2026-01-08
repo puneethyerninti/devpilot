@@ -23,3 +23,12 @@ yarn-error.log
 
 # Docker
 docker-compose.override.yml
+
+# local env / secrets
+.env
+*.pem
+postgres-data/
+mongo-data/
+qdrant-data/
+.history/
+node_modules/
