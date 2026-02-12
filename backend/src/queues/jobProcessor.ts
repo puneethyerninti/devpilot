@@ -1,13 +1,12 @@
 // GENERATED FROM COPILOT PROMPT: DevPilot Phase3 MVP - adapt as needed
-import { Worker } from "bullmq";
+import { Queue, Worker } from "bullmq";
 import IORedis from "ioredis";
 import type { AppConfig } from "../config";
 import { prisma } from "../prisma/client";
 import type { Prisma } from "@prisma/client";
 import { initSocketPublisher, publishSocketEvent } from "../ws/publisher";
-import { AiClient } from "../services/aiClient";
+import { streamReview, type FinalReviewResult, type ReviewFinding } from "../services/openai";
 import { logger } from "../utils/logger";
-import { getInstallationClient } from "../github/githubAppClient.js";
 import * as Sentry from "@sentry/node";
 
 export type JobPayload = {
@@ -24,6 +23,50 @@ export type JobPayload = {
 };
 
 type ParsedHunk = { file: string; startLine: number; endLine: number; hunk: string };
+
+export type ProgressJobLike = {
+  updateProgress: (progress: number | object) => Promise<void>;
+};
+
+export type StreamReviewDeps = {
+  publishProgress: (progress: number) => Promise<void>;
+  persistPartial: (partialText: string, force: boolean) => Promise<void>;
+  logLine: (line: string) => Promise<void>;
+};
+
+export const streamReviewForJob = async (config: AppConfig, job: ProgressJobLike, dbJobId: number, prompt: string, deps: StreamReviewDeps) => {
+  let partialText = "";
+  let lastPersistAt = 0;
+
+  const persistMaybe = async (force: boolean) => {
+    const now = Date.now();
+    if (!force && now - lastPersistAt < 1500) return;
+    lastPersistAt = now;
+    await deps.persistPartial(partialText, force);
+  };
+
+  const result: FinalReviewResult = await streamReview(config, {
+    prompt,
+    metadata: { jobId: dbJobId },
+    onChunk: async (chunk) => {
+      if (chunk.type === "progress") {
+        await job.updateProgress(chunk.progress);
+        await deps.publishProgress(chunk.progress);
+        return;
+      }
+      if (chunk.type === "delta") {
+        partialText += chunk.text;
+        await persistMaybe(false);
+      }
+    },
+    onError: async (err) => {
+      await deps.logLine(`ai.stream.error ${err.message}`);
+    }
+  });
+
+  await persistMaybe(true);
+  return { result, partialText };
+};
 
 export const parsePatch = (file: string, patch: string): ParsedHunk[] => {
   const lines = patch.split("\n");
@@ -48,9 +91,6 @@ export const parsePatch = (file: string, patch: string): ParsedHunk[] => {
 
     if (!current) continue;
     current.buf.push(line);
-    if (/^\+/.test(line) || /^-/.test(line)) {
-      current.end = Math.max(current.end, current.start + current.buf.length - 1);
-    }
   }
 
   flushCurrent();
@@ -101,7 +141,12 @@ const fetchPullRequestData = async (
     throw new Error("Missing installation id for live mode");
   }
 
-  const octokit = installationId ? await getInstallationClient(config, installationId) : null;
+  const octokit = installationId
+    ? await (async () => {
+        const { getInstallationClient } = await import("../github/githubAppClient.js");
+        return getInstallationClient(config, installationId);
+      })()
+    : null;
   if (!octokit) {
     throw new Error("Missing GitHub installation client");
   }
@@ -116,7 +161,7 @@ const fetchPullRequestData = async (
     const prMeta = await octokit.pulls.get({ owner, repo, pull_number: prNumber });
     const commits = prMeta.data.commits;
     const filesResp = await octokit.pulls.listFiles({ owner, repo, pull_number: prNumber, per_page: 100 });
-    const files = filesResp.data.map((f) => ({
+    const files = filesResp.data.map((f: { filename: string; patch?: string | null; additions: number; deletions: number }) => ({
       path: f.filename,
       patch: f.patch ?? undefined,
       additions: f.additions,
@@ -173,7 +218,26 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
   enableReadyCheck: false,
 });
 
-  const aiClient = new AiClient(config);
+  const dlq = new Queue<JobPayload>("pr_dlq", { connection });
+
+  const makePrompt = (repo: string, prNumber: number, hunks: Array<{ file: string; startLine: number; endLine: number; hunk: string }>) => {
+    const header = `Repository: ${repo}\nPull Request: #${prNumber}\n\n`;
+    const body = hunks
+      .slice(0, 50)
+      .map((c, i) => `HUNK ${i + 1}: ${c.file}:${c.startLine}-${c.endLine}\n${c.hunk}`)
+      .join("\n\n");
+    return header + body;
+  };
+
+  const findingsToInlineSuggestions = (findings: ReviewFinding[]) => {
+    return findings.map((f) => ({
+      file: f.file,
+      startLine: f.line,
+      endLine: f.line,
+      suggestion: f.suggestedFix ? `${f.explanation}\nSuggested fix: ${f.suggestedFix}` : f.explanation,
+      severity: f.severity
+    }));
+  };
 
   const worker = new Worker<JobPayload>(
     config.queueName,
@@ -226,20 +290,38 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
 
       const effectiveAiMode = job.data.forceLive ? "live" : config.aiMode;
 
-      const aiResult = await aiClient.summarize(
+      const prompt = makePrompt(job.data.repo, job.data.prNumber, chunkedHunks);
+
+      const { result } = await streamReviewForJob(
+        config,
+        job,
+        dbJobId,
+        prompt,
         {
-          repo: job.data.repo,
-          prNumber: job.data.prNumber,
-          chunks: chunkedHunks
-        },
-        { forceLive: job.data.forceLive }
+          publishProgress: async (progress) => {
+            await publishSocketEvent({ type: "job.progress", payload: { id: dbJobId, progress } }, `job:${dbJobId}`);
+          },
+          persistPartial: async (partialText, _force) => {
+            await prisma.pRJob
+              .update({ where: { id: dbJobId }, data: { aiReviewMd: partialText.slice(0, 20000) } })
+              .catch(() => undefined);
+          },
+          logLine: async (line) => logJobLine(dbJobId, line)
+        }
       );
 
-      const riskScoreNumeric = aiResult.riskScore.level === "high" ? 0.9 : aiResult.riskScore.level === "medium" ? 0.5 : 0.2;
+      const inlineSuggestions = findingsToInlineSuggestions(result.findings);
+      const riskScoreNumeric = inlineSuggestions.some((s) => s.severity === "critical" || s.severity === "high")
+        ? 0.9
+        : inlineSuggestions.some((s) => s.severity === "medium")
+          ? 0.5
+          : 0.2;
+
+      const summaryMd = `${result.summary}\n\nFindings: ${result.findings.length}`;
 
       await prisma.pRFile.deleteMany({ where: { jobId: dbJobId } });
-      const suggestionFiles = (aiResult.inlineSuggestions ?? []).reduce<Record<string, Array<{ startLine: number; endLine: number }>>>(
-        (acc, s) => {
+      const suggestionFiles = (inlineSuggestions ?? []).reduce<Record<string, Array<{ startLine: number; endLine: number }>>>(
+        (acc, s: { file: string; startLine: number; endLine: number }) => {
           if (!acc[s.file]) acc[s.file] = [];
           acc[s.file].push({ startLine: s.startLine, endLine: s.endLine });
           return acc;
@@ -252,7 +334,7 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
 
       await Promise.all(
         uniquePaths.map((path, idx) => {
-          const comments = suggestionFiles[path]?.map((c) => [c.startLine, c.endLine]).flat() ?? [];
+          const comments = suggestionFiles[path]?.map((c: { startLine: number; endLine: number }) => [c.startLine, c.endLine]).flat() ?? [];
           return prisma.pRFile.create({
             data: {
               id: `${dbJobId}-file-${idx}`,
@@ -268,13 +350,13 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
         where: { id: dbJobId },
         data: {
           status: "done",
-          summary: aiResult.summary,
-          aiReviewMd: aiResult.summary,
-          inlineSuggestions: aiResult.inlineSuggestions as unknown as Prisma.InputJsonValue,
+          summary: result.summary,
+          aiReviewMd: summaryMd,
+          inlineSuggestions: inlineSuggestions as unknown as Prisma.InputJsonValue,
           riskScore: riskScoreNumeric,
-          aiResponseRaw: aiResult.aiResponseRaw as unknown as Prisma.InputJsonValue,
-          tokenCount: aiResult.tokenCount,
-          costCents: aiResult.costCents,
+          aiResponseRaw: (result.rawJson ?? { rawText: result.rawText }) as unknown as Prisma.InputJsonValue,
+          tokenCount: result.tokenCount,
+          costCents: result.costCents,
           finishedAt: new Date(),
           meta: { ...metaForProcessing, commentPosted: false }
         }
@@ -293,16 +375,17 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
         logger.info("github.comment_skipped_duplicate", { jobId: dbJobId });
       } else if (job.data.installationId && owner && repoName) {
         try {
+          const { getInstallationClient } = await import("../github/githubAppClient.js");
           const octokit = await getInstallationClient(config, job.data.installationId);
-          const body = `DevPilot AI Summary (${effectiveAiMode}):\n\n${aiResult.summary}\n\nRisk: ${aiResult.riskScore.level} - ${aiResult.riskScore.reason}`;
+          const body = `DevPilot AI Summary (${effectiveAiMode}):\n\n${result.summary}`;
           await octokit.issues.createComment({ owner, repo: repoName, issue_number: job.data.prNumber, body });
-          if (aiResult.inlineSuggestions.length) {
+          if (inlineSuggestions.length) {
             const { postReviewComments } = await import("../github/githubAppClient.js");
             await postReviewComments(octokit, {
               owner,
               repo: repoName,
               pullNumber: job.data.prNumber,
-              comments: aiResult.inlineSuggestions.map((s) => ({
+              comments: inlineSuggestions.map((s) => ({
                 file: s.file,
                 startLine: s.startLine,
                 endLine: s.endLine,
@@ -314,7 +397,7 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
             where: { id: dbJobId },
             data: { meta: { ...metaForProcessing, commentPosted: true } }
           });
-          await logJobLine(dbJobId, `Posted summary and ${aiResult.inlineSuggestions.length} inline comments to ${owner}/${repoName}#${job.data.prNumber}`);
+          await logJobLine(dbJobId, `Posted summary and ${inlineSuggestions.length} inline comments to ${owner}/${repoName}#${job.data.prNumber}`);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           logger.error("github.comment_failed", { jobId: dbJobId, error: message });
@@ -329,12 +412,12 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
         type: "job.completed",
         payload: {
           id: dbJobId,
-          summary: aiResult.summary,
-          tokenCount: aiResult.tokenCount,
-          costCents: aiResult.costCents
+          summary: result.summary,
+          tokenCount: result.tokenCount,
+          costCents: result.costCents
         }
       });
-      await logJobLine(dbJobId, `AI review complete (risk=${aiResult.riskScore.level}, inline=${aiResult.inlineSuggestions.length})`);
+      await logJobLine(dbJobId, `AI review complete (inline=${inlineSuggestions.length})`);
       await publishSocketEvent({ type: "job.updated", payload: { id: dbJobId, status: "done", finishedAt: new Date().toISOString() } });
       logger.info("metrics.job.success", { jobId: dbJobId, pr: job.data.prNumber });
     },
@@ -344,6 +427,7 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
   worker.on("failed", async (job, err) => {
     const dbJobId = job?.data?.dbJobId as number | undefined;
     if (!dbJobId) return;
+    if (!job) return;
     await prisma.pRJob.update({
       where: { id: dbJobId },
       data: { status: "failed", errorText: err.message }
@@ -353,6 +437,30 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
     logger.error("job.failed", { jobId: dbJobId, error: err.message });
     Sentry.captureException(err);
     logger.info("metrics.job.failed", { jobId: dbJobId });
+
+    const attempts = job?.opts?.attempts ?? 1;
+    const attemptsMade = job?.attemptsMade ?? 0;
+    const exhausted = attemptsMade >= attempts;
+    if (exhausted) {
+      try {
+        await dlq.add("pr-analysis", job.data, {
+          removeOnComplete: true,
+          removeOnFail: false,
+          jobId: `dlq-${job.id ?? dbJobId}-${Date.now()}`
+        });
+        await prisma.actionLog.create({
+          data: {
+            jobId: dbJobId,
+            kind: "job.dlq",
+            message: "Job moved to DLQ after exhausted retries",
+            metadata: { attempts, attemptsMade }
+          }
+        });
+        await publishSocketEvent({ type: "job.log", payload: { id: dbJobId, line: `Moved to DLQ (attempts=${attempts}, made=${attemptsMade})`, ts: new Date().toISOString() } }, `job:${dbJobId}`);
+      } catch (dlqErr) {
+        logger.error("job.dlq_enqueue_failed", { jobId: dbJobId, error: (dlqErr as Error).message });
+      }
+    }
   });
 
   worker.on("completed", async (job) => {
