@@ -90,6 +90,7 @@ model PRJob {
 
   files      PRFile[]
   actionLogs ActionLog[]
+  aiUsages    AiUsage[]
 
   startedAt  DateTime?
   finishedAt DateTime?
@@ -97,6 +98,22 @@ model PRJob {
   updatedAt  DateTime @updatedAt
 
   @@unique([installationId, repoOwner, repoName, prNumber, headSha])
+}
+
+model AiUsage {
+  id         Int      @id @default(autoincrement())
+  jobId      Int
+  provider   String
+  model      String
+  tokenCount Int
+  costCents  Int
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  job PRJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([provider])
 }
 
 model WebhookEvent {
