@@ -8,6 +8,7 @@ import { initSocketPublisher, publishSocketEvent } from "../ws/publisher";
 import { streamReview, type FinalReviewResult, type ReviewFinding } from "../services/openai";
 import { logger } from "../utils/logger";
 import * as Sentry from "@sentry/node";
+import { postReviewComments, postSummaryComment } from "../services/github";
 
 export type JobPayload = {
   repo: string;
@@ -375,33 +376,29 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
         logger.info("github.comment_skipped_duplicate", { jobId: dbJobId });
       } else if (job.data.installationId && owner && repoName) {
         try {
-          const { getInstallationClient } = await import("../github/githubAppClient.js");
-          const octokit = await getInstallationClient(config, job.data.installationId);
           const body = `DevPilot AI Summary (${effectiveAiMode}):\n\n${result.summary}`;
-          await octokit.issues.createComment({ owner, repo: repoName, issue_number: job.data.prNumber, body });
-          if (inlineSuggestions.length) {
-            const { postReviewComments } = await import("../github/githubAppClient.js");
-            await postReviewComments(octokit, {
-              owner,
-              repo: repoName,
-              pullNumber: job.data.prNumber,
-              comments: inlineSuggestions.map((s) => ({
-                file: s.file,
-                startLine: s.startLine,
-                endLine: s.endLine,
-                body: `${s.severity.toUpperCase()}: ${s.suggestion}`
-              }))
-            });
-          }
+          await postSummaryComment(config, job.data.installationId, { owner, repo: repoName, prNumber: job.data.prNumber, body });
+          await postReviewComments(config, job.data.installationId, {
+            owner,
+            repo: repoName,
+            prNumber: job.data.prNumber,
+            comments: inlineSuggestions.map((s) => ({
+              file: s.file,
+              startLine: s.startLine,
+              endLine: s.endLine,
+              body: `${s.severity.toUpperCase()}: ${s.suggestion}`
+            }))
+          });
           await prisma.pRJob.update({
             where: { id: dbJobId },
-            data: { meta: { ...metaForProcessing, commentPosted: true } }
+            data: { meta: { ...metaForProcessing, commentPosted: true }, postedToGithubAt: new Date(), postedToGithubError: null }
           });
           await logJobLine(dbJobId, `Posted summary and ${inlineSuggestions.length} inline comments to ${owner}/${repoName}#${job.data.prNumber}`);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           logger.error("github.comment_failed", { jobId: dbJobId, error: message });
           Sentry.captureException(err);
+          await prisma.pRJob.update({ where: { id: dbJobId }, data: { postedToGithubError: message } }).catch(() => undefined);
           throw err;
         }
       } else {
