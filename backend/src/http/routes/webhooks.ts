@@ -6,11 +6,11 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../prisma/client";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { sendError, sendOk } from "../../utils/http";
-import { verifyGitHubSignature } from "../../utils/webhook";
 import type { AppConfig } from "../../config";
 import type { JobPayload } from "../../queues/jobProcessor";
 import { enqueuePullRequestJob } from "../../queues";
 import { logger } from "../../utils/logger";
+import { verifyGitHubWebhook } from "../../middleware/githubWebhook";
 
 const supportedActions = new Set(["opened", "synchronize", "reopened"]);
 
@@ -35,22 +35,14 @@ export const createWebhookRouter = (config: AppConfig, queue: Queue<JobPayload>)
 
   router.post(
     "/github",
+    verifyGitHubWebhook(config),
     asyncHandler(async (req, res) => {
       const deliveryId = req.get("x-github-delivery");
-      const signature = req.get("x-hub-signature-256");
-      const signatureSha1 = req.get("x-hub-signature");
       const event = req.get("x-github-event");
-      const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
 
       if (!deliveryId) return sendError(res, "Missing delivery id", 400);
       if (!event) return sendError(res, "Missing event type", 400);
       if (!config.githubWebhookSecret) return sendError(res, "Signature required", 401);
-
-      const valid = verifyGitHubSignature(rawBody, signature, config.githubWebhookSecret, signatureSha1);
-      if (!valid) {
-        logger.warn("webhook.signature_invalid", { deliveryId });
-        return sendError(res, "Invalid signature", 401);
-      }
 
       const duplicate = await prisma.webhookEvent.findUnique({ where: { deliveryId } });
       if (duplicate) {
