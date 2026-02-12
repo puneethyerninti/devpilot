@@ -17,7 +17,10 @@ jest.mock("../../../prisma/client", () => {
     create: jest.fn(),
     update: jest.fn()
   };
-  return { prisma: { webhookEvent }, __webhookMock: webhookEvent };
+  const actionLog = {
+    create: jest.fn()
+  };
+  return { prisma: { webhookEvent, actionLog }, __webhookMock: webhookEvent };
 });
 
 type WebhookMock = { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
@@ -70,7 +73,7 @@ describe("webhooks route", () => {
     const payload = {
       action: "opened",
       pull_request: { number: 7, head: { sha: "abc123" }, title: "Add stuff" },
-      repository: { full_name: "org/repo" },
+      repository: { id: 1, full_name: "org/repo", name: "repo", owner: { login: "org" } },
       installation: { id: 99 },
       sender: { login: "alice" }
     };
@@ -96,7 +99,8 @@ describe("webhooks route", () => {
       headSha: "abc123",
       triggeredBy: "alice",
       installationId: 99,
-      deliveryId: "delivery-1"
+      deliveryId: "delivery-1",
+      forceLive: true
     });
   });
 
@@ -104,7 +108,12 @@ describe("webhooks route", () => {
     const webhookMock = getWebhookMock();
     const enqueueMock = getEnqueueMock();
     webhookMock.findUnique.mockResolvedValueOnce({ id: 123 });
-    const payload = { action: "opened", pull_request: { number: 1, head: { sha: "x" } }, repository: { full_name: "o/r" }, installation: { id: 1 } };
+    const payload = {
+      action: "opened",
+      pull_request: { number: 1, head: { sha: "x" } },
+      repository: { id: 2, full_name: "o/r", name: "r", owner: { login: "o" } },
+      installation: { id: 1 }
+    };
     const raw = JSON.stringify(payload);
     const signature = "sha256=" + crypto.createHmac("sha256", secret).update(raw).digest("hex");
 
