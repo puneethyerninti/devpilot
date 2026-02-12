@@ -1,0 +1,5 @@
+# // GENERATED FROM COPILOT PROMPT: DevPilot Phase3 MVP - adapt as needed
+packages:
+  - backend
+  - frontend
+  - worker

@@ -1,0 +1,18 @@
+{
+  "// GENERATED FROM COPILOT PROMPT: DevPilot Phase3 MVP - adapt as needed": "",
+  "name": "@devpilot/worker",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,20 +1,25 @@
-# Build the TypeScript project first
-FROM node:20-bullseye AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY tsconfig.json ./
-COPY src ./src
-RUN npm run build
+# // GENERATED FROM COPILOT PROMPT: DevPilot Phase3 MVP - adapt as needed
+FROM node:20-bullseye AS base
 
-# Runtime image only needs production deps + compiled JS
-FROM node:20-bullseye-slim AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-ENV ROLE=server
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY --from=builder /app/dist ./dist
+ENV PNPM_HOME=/root/.local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
+
+WORKDIR /workspace
+
+COPY package.json pnpm-workspace.yaml ./
+COPY backend ./backend
+COPY worker ./worker
+COPY frontend ./frontend
+
+RUN pnpm install
+
+ARG APP_DIR=backend
+ARG START_SCRIPT=dev
+ENV APP_DIR=${APP_DIR}
+ENV START_SCRIPT=${START_SCRIPT}
+WORKDIR /workspace/${APP_DIR}
+
 EXPOSE 4000
-# ROLE determines which process runs: worker or API server
-CMD ["sh", "-c", "if [ \"$ROLE\" = \"worker\" ]; then npm run worker; else npm run start; fi"]
+
+CMD ["sh", "-c", "pnpm ${START_SCRIPT}"]

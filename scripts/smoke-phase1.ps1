@@ -1,0 +1,23 @@
+param(
+  [string]$ApiUrl = "http://localhost:4000",
+  [string]$DemoToken = $env:DEMO_TOKEN
+)
+
+if (-not $DemoToken) { throw "DEMO_TOKEN is required" }
+$headers = @{ Authorization = "Bearer $DemoToken" }
+
+Write-Host "[smoke] checking /health" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$ApiUrl/health" -Headers $headers -Method Get | Out-Null
+
+Write-Host "[smoke] listing jobs" -ForegroundColor Cyan
+$jobs = Invoke-RestMethod -Uri "$ApiUrl/api/jobs" -Headers $headers -Method Get
+$jobId = $jobs.data.jobs[0].id
+if (-not $jobId) { throw "No jobs returned" }
+
+Write-Host "[smoke] fetching job $jobId" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$ApiUrl/api/jobs/$jobId" -Headers $headers -Method Get | Out-Null
+
+Write-Host "[smoke] checking workers" -ForegroundColor Cyan
+Invoke-RestMethod -Uri "$ApiUrl/api/workers" -Headers $headers -Method Get | Out-Null
+
+Write-Host "[smoke] phase1 ok" -ForegroundColor Green

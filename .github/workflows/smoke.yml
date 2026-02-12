@@ -1,0 +1,104 @@
+name: Smoke Tests
+
+on:
+  push:
+    branches: ["feature/finish-phases", "main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: devpilot
+          POSTGRES_PASSWORD: devpilot
+          POSTGRES_DB: devpilotdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devpilot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+        run: pnpm --dir backend prisma migrate deploy
+
+      - name: Generate Prisma client
+        env:
+          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+        run: pnpm --dir backend prisma generate
+
+      - name: Seed database
+        env:
+          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+        run: pnpm --dir backend prisma db seed
+
+      - name: Build backend
+        run: pnpm --dir backend build
+        env:
+          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+
+      - name: Start backend
+        env:
+          PORT: 4000
+          NODE_ENV: development
+          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+          REDIS_URL: redis://localhost:6379
+          FRONTEND_URL: http://localhost:5173
+          SESSION_SECRET: ci-session
+          JWT_ISSUER: devpilot
+          GITHUB_CLIENT_ID: placeholder
+          GITHUB_CLIENT_SECRET: placeholder
+          DEMO_TOKEN: ci-demo-token
+        run: |
+          node backend/dist/server.js &
+          echo $! > backend-server.pid
+
+      - name: Wait for backend
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:4000/health > /dev/null; then exit 0; fi
+            sleep 1;
+          done
+          exit 1
+
+      - name: Smoke test phase1
+        env:
+          API_URL: http://localhost:4000
+          DEMO_TOKEN: ci-demo-token
+        run: bash scripts/smoke-phase1.sh
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f backend-server.pid ]; then kill $(cat backend-server.pid) || true; fi

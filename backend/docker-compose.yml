@@ -1,8 +1,19 @@
-version: "3.8"
-
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: devpilot
+      POSTGRES_PASSWORD: devpilot
+      POSTGRES_DB: devpilotdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
   redis:
-    image: redis:7
+    image: redis:6
     ports:
       - "6379:6379"
-    restart: unless-stopped
+
+volumes:
+  pgdata:

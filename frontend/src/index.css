@@ -1,0 +1,26 @@
+﻿/* DevPilot Premium UI - Import global styles */
+@import './styles/globals.css';
+
+/* Additional premium utilities */
+.app-container {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Smooth page transitions */
+.page-transition {
+  animation: pageTransition 0.3s ease-out;
+}
+
+@keyframes pageTransition {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

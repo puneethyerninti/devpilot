@@ -1,0 +1,111 @@
+# // GENERATED FROM COPILOT PROMPT: DevPilot Phase3 MVP - adapt as needed
+name: DevPilot CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "*"
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.2
+          run_install: true
+
+      - name: Lint
+        run: |
+          pnpm --dir backend lint
+          pnpm --dir frontend lint
+
+      - name: Unit tests
+        run: |
+          pnpm --dir backend test -- --runInBand
+          pnpm --dir frontend test -- --runInBand
+
+      - name: Build packages
+        run: |
+          pnpm --dir backend build
+          pnpm --dir worker build
+          pnpm --dir frontend build
+
+      - name: Integration stack
+        run: |
+          docker compose up -d postgres redis
+          pnpm --dir backend prisma migrate deploy
+          pnpm --dir backend prisma db seed
+          pnpm --dir frontend exec playwright install --with-deps
+          pnpm --dir frontend exec playwright test
+        env:
+          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+          REDIS_URL: redis://localhost:6379
+
+      - name: Teardown stack
+        if: always()
+        run: docker compose down -v
+
+      - name: Deploy staging
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "Deploying to staging..."
+          # TODO: integrate with your hosting provider (Render, Railway, Fly.io, etc.)
+
+  build-and-artifact:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.2
+          run_install: true
+
+      - name: Build backend image
+        run: |
+          docker build -t devpilot-backend:ci -f Dockerfile .
+
+      - name: Save backend image artifact
+        run: |
+          docker save devpilot-backend:ci | gzip > backend-image.tar.gz
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: devpilot-backend-image
+          path: backend-image.tar.gz
+
+      - name: Integration compose up
+        run: |
+          docker compose up -d postgres redis
+          pnpm --dir backend test -- --runInBand
+        env:
+          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+          REDIS_URL: redis://localhost:6379
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v

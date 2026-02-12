@@ -1,0 +1,194 @@
+// GENERATED FROM COPILOT PROMPT: DevPilot Phase3 MVP - adapt as needed
+import { Router } from "express";
+import { z } from "zod";
+import { prisma } from "../../prisma/client";
+import { asyncHandler } from "../../utils/asyncHandler";
+import { sendError, sendOk } from "../../utils/http";
+import { requireAuth, requireRole } from "../../middleware/auth";
+import type { Queue } from "bullmq";
+import type { JobPayload } from "../../queues/jobProcessor";
+import { enqueuePullRequestJob } from "../../queues";
+import type { $Enums } from "@prisma/client";
+type JobStatus = $Enums.JobStatus;
+
+const progressFor = (status: JobStatus) => {
+  if (status === "done" || status === "failed") return 100;
+  if (status === "processing") return 50;
+  return 0;
+};
+
+const runJobSchema = z.object({
+  repo: z.string(),
+  prNumber: z.coerce.number(),
+  headSha: z.string().min(6)
+});
+
+export const createJobRouter = (queue: Queue<JobPayload>) => {
+  const router = Router();
+
+  router.get(
+    "/",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { status, repo, page = "1", perPage = "20" } = req.query;
+      const allowedStatuses = new Set(["queued", "processing", "done", "failed"]);
+      const statusFilter = typeof status === "string" && allowedStatuses.has(status) ? status : undefined;
+      const where = {
+        ...(statusFilter ? { status: statusFilter as JobStatus } : {}),
+        ...(repo ? { repo: { is: { fullName: repo as string } } } : {})
+      };
+
+      const pageNum = Number.isNaN(Number(page)) ? 1 : Number(page);
+      const perPageNumber = Number.isNaN(Number(perPage)) ? 20 : Number(perPage);
+      const take = Math.min(perPageNumber, 100);
+      const skip = (pageNum - 1) * take;
+
+      const [jobs, total] = await Promise.all([
+        prisma.pRJob.findMany({ where, orderBy: { createdAt: "desc" }, skip, take, include: { repo: true } }),
+        prisma.pRJob.count({ where })
+      ]);
+
+      const serializedJobs = jobs.map(({ repo, meta, ...job }) => {
+        const workerId = meta && typeof meta === "object" ? (meta as Record<string, unknown>).workerId : undefined;
+        return {
+          id: job.id,
+          repoFullName: repo.fullName,
+          status: job.status,
+          summary: job.summary ?? undefined,
+          aiReviewMd: job.aiReviewMd ?? undefined,
+          riskScore: job.riskScore ?? undefined,
+          createdAt: job.createdAt.toISOString(),
+          updatedAt: job.updatedAt.toISOString(),
+          progress: progressFor(job.status),
+          workerId: typeof workerId === "string" ? workerId : null
+        };
+      });
+
+      sendOk(res, { jobs: serializedJobs, total, page: pageNum, perPage: take });
+    })
+  );
+
+  router.get(
+    "/:id",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const jobId = Number(req.params.id);
+      if (Number.isNaN(jobId)) {
+        return sendError(res, "Invalid job id", 400);
+      }
+      const job = await prisma.pRJob.findUnique({
+        where: { id: jobId },
+        include: { files: true, actionLogs: { orderBy: { createdAt: "asc" }, take: 500 }, repo: true }
+      });
+      if (!job) {
+        return sendError(res, "Job not found", 404);
+      }
+      const { actionLogs, repo, files, meta, ...rest } = job;
+
+      const timeline = actionLogs.map((log) => ({
+        id: log.id,
+        kind: log.kind,
+        message: log.message,
+        createdAt: log.createdAt.toISOString()
+      }));
+
+      const workerMeta = meta && typeof meta === "object" ? (meta as Record<string, unknown>) : undefined;
+
+      const payload = {
+        id: rest.id,
+        repoFullName: repo.fullName,
+        prNumber: rest.prNumber,
+        headSha: rest.headSha,
+        triggeredBy: rest.triggeredBy ?? null,
+        status: rest.status,
+        summary: rest.summary ?? undefined,
+        aiReviewMd: rest.aiReviewMd ?? undefined,
+        riskScore: rest.riskScore ?? undefined,
+        inlineSuggestions: rest.inlineSuggestions ?? undefined,
+        createdAt: rest.createdAt.toISOString(),
+        updatedAt: rest.updatedAt.toISOString(),
+        progress: progressFor(rest.status),
+        logs: actionLogs.map((log) => ({ id: log.id, message: log.message, createdAt: log.createdAt.toISOString() })),
+        files: files.map((file) => ({
+          id: file.id,
+          path: file.path,
+          comments: typeof file.comments === "object" && file.comments ? (file.comments as Record<string, unknown>) : undefined
+        })),
+        timeline,
+        worker: {
+          id: typeof workerMeta?.workerId === "string" ? workerMeta.workerId : null,
+          name: typeof workerMeta?.workerId === "string" ? workerMeta.workerId : null
+        }
+      };
+      sendOk(res, payload);
+    })
+  );
+
+  router.post(
+    "/:id/retry",
+    requireRole("operator"),
+    asyncHandler(async (req, res) => {
+      const jobId = Number(req.params.id);
+      if (Number.isNaN(jobId)) {
+        return sendError(res, "Invalid job id", 400);
+      }
+      const job = await prisma.pRJob.findUnique({ where: { id: jobId }, include: { repo: true } });
+      if (!job) {
+        return sendError(res, "Job not found", 404);
+      }
+      const newJob = await enqueuePullRequestJob(queue, {
+        repo: job.repo.fullName,
+        prNumber: job.prNumber,
+        headSha: job.headSha,
+        triggeredBy: req.user!.login
+      });
+      sendOk(res, { jobId: newJob.id }, 202);
+    })
+  );
+
+  router.post(
+    "/:id/run-ai",
+    requireRole("operator"),
+    asyncHandler(async (req, res) => {
+      const jobId = Number(req.params.id);
+      if (Number.isNaN(jobId)) {
+        return sendError(res, "Invalid job id", 400);
+      }
+      const job = await prisma.pRJob.findUnique({ where: { id: jobId }, include: { repo: true } });
+      if (!job) {
+        return sendError(res, "Job not found", 404);
+      }
+
+      const newJob = await enqueuePullRequestJob(queue, {
+        repo: job.repo.fullName,
+        prNumber: job.prNumber,
+        headSha: job.headSha,
+        triggeredBy: req.user!.login,
+        installationId: job.installationId ?? undefined
+      });
+
+      sendOk(res, { jobId: newJob.id }, 202);
+    })
+  );
+
+  router.post(
+    "/run",
+    requireRole("admin"),
+    asyncHandler(async (req, res) => {
+      const parsed = runJobSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return sendError(res, parsed.error.message, 400);
+      }
+      const payload = parsed.data;
+      const job = await enqueuePullRequestJob(queue, {
+        repo: payload.repo,
+        prNumber: payload.prNumber,
+        headSha: payload.headSha,
+        triggeredBy: req.user!.login
+      });
+      sendOk(res, { jobId: job.id }, 202);
+    })
+  );
+
+  return router;
+};

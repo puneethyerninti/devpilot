@@ -1,0 +1,33 @@
+﻿/* DevPilot UI tokens: import in components that need neutral colors/spacing. */
+:root {
+  /* Spacing scale */
+  --dp-space-2: 0.5rem;
+  --dp-space-3: 0.75rem;
+  --dp-space-4: 1rem;
+  --dp-space-6: 1.5rem;
+  /* Radius and borders */
+  --dp-radius: 0.75rem;
+  --dp-border: 1px solid rgba(15, 23, 42, 0.08);
+  /* Surfaces */
+  --dp-surface: #ffffff;
+  --dp-surface-muted: #f8fafc;
+  --dp-surface-dark: #0f172a;
+  --dp-border-dark: 1px solid rgba(226, 232, 240, 0.12);
+  /* Text */
+  --dp-text: #0f172a;
+  --dp-text-muted: #475569;
+}
+
+:root.dark {
+  --dp-surface: #0f172a;
+  --dp-surface-muted: #0b1224;
+  --dp-border: var(--dp-border-dark);
+  --dp-text: #e2e8f0;
+  --dp-text-muted: #cbd5e1;
+}
+
+.focus-ring {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+

@@ -1,24 +1,102 @@
-version: "3.8"
+# // GENERATED FROM COPILOT PROMPT: DevPilot Phase3 MVP - adapt as needed
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://devpilot:devpilot@postgres:5432/devpilotdb
+  REDIS_URL: redis://redis:6379
+  PORT: "4000"
+  NODE_ENV: development
+  QUEUE_NAME: pr-jobs
+  FRONTEND_URL: http://localhost:5173
 
 services:
-  redis:
-    image: redis:7
-    ports: ["6379:6379"]
+  postgres:
+    image: postgres:13
     restart: unless-stopped
-
-  mongo:
-    image: mongo:6
-    ports: ["27017:27017"]
-    restart: unless-stopped
-    volumes:
-      - ./mongo-data:/data/db
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
     environment:
-      - QDRANT__SERVICE__GRPC_PORT=6334
-    restart: unless-stopped
+      POSTGRES_USER: devpilot
+      POSTGRES_PASSWORD: devpilot
+      POSTGRES_DB: devpilotdb
+    ports:
+      - "5432:5432"
     volumes:
-      - ./qdrant-data:/qdrant/storage
+      - ./postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:6
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@devpilot.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+
+  backend:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_DIR: backend
+        START_SCRIPT: dev
+    env_file:
+      - ./backend/.env
+    environment:
+      <<: *backend-env
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - redis
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_DIR: worker
+        START_SCRIPT: dev
+    env_file:
+      - ./backend/.env
+    environment:
+      <<: *backend-env
+    depends_on:
+      - redis
+      - postgres
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps -ef | grep -v grep | grep worker"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_DIR: frontend
+        START_SCRIPT: "dev --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_URL: http://localhost:4000
+      VITE_SOCKET_URL: http://localhost:4000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend

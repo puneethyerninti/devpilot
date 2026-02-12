@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  viewer
+  operator
+  admin
+}
+
+enum RepoRole {
+  viewer
+  operator
+  admin
+}
+
+enum JobStatus {
+  queued
+  processing
+  done
+  failed
+}
+
+model User {
+  id        String     @id @default(cuid())
+  githubId  String     @unique
+  login     String     @unique
+  name      String
+  avatarUrl String?
+  role      UserRole  @default(viewer)
+  repos     RepoUser[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Repo {
+  id            Int      @id @default(autoincrement())
+  fullName      String   @unique
+  owner         String
+  name          String
+  defaultBranch String
+
+  jobs      PRJob[]
+  users     RepoUser[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RepoUser {
+  repoId    Int
+  userId    String
+  role      RepoRole @default(viewer)
+  createdAt DateTime @default(now())
+
+  repo Repo @relation(fields: [repoId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([repoId, userId])
+}
+
+model PRJob {
+  id            Int      @id @default(autoincrement())
+  jobId         String   @unique
+  prNumber      Int
+  headSha       String
+  deliveryId    String?  @unique
+  status        JobStatus @default(queued)
+  summary       String?
+  aiResponseRaw Json?
+  aiReviewMd    String?
+  riskScore     Float?
+  inlineSuggestions Json?
+  errorText     String?
+  tokenCount    Int?
+  costCents     Int?
+  meta          Json?
+  triggeredBy   String?
+  installationId Int?
+  repoOwner      String?
+  repoName       String?
+
+  repoId Int
+  repo   Repo @relation(fields: [repoId], references: [id])
+
+  files      PRFile[]
+  actionLogs ActionLog[]
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([installationId, repoOwner, repoName, prNumber, headSha])
+}
+
+model WebhookEvent {
+  id         Int      @id @default(autoincrement())
+  deliveryId String   @unique
+  eventType  String
+  receivedAt DateTime @default(now())
+  processed  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+model PRFile {
+  id        String   @id @default(cuid())
+  jobId     Int
+  path      String
+  comments  Json?
+  createdAt DateTime @default(now())
+
+  job PRJob @relation(fields: [jobId], references: [id])
+}
+
+model ActionLog {
+  id        String   @id @default(cuid())
+  jobId     Int?
+  workerId  String?
+  kind      String
+  message   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  job PRJob? @relation(fields: [jobId], references: [id])
+
+  @@index([jobId])
+  @@index([kind])
+}

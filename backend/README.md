@@ -27,3 +27,13 @@ The API exposes:
 - `GET /health` – simple heartbeat endpoint.
 
 Build for production with `npm run build` then start with `npm start`.
+
+## Webhook smoke test
+
+Run the local GitHub webhook smoke to ensure real PR payloads are stored instead of mocks:
+
+```powershell
+pwsh -File ../scripts/smoke-webhook.ps1 -RepoFullName "owner/repo" -PrNumber 1 -HeadSha "<commit-sha>" -InstallationId <installation-id> -Secret $env:GITHUB_WEBHOOK_SECRET
+```
+
+The response should include `jobId` and `/api/jobs/{id}` will show the real `repoFullName`, `prNumber`, `headSha`, and action logs.
