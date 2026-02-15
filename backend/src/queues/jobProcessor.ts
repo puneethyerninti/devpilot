@@ -9,6 +9,7 @@ import { streamReview, type FinalReviewResult, type ReviewFinding } from "../ser
 import { logger } from "../utils/logger";
 import * as Sentry from "@sentry/node";
 import { postReviewComments, postSummaryComment } from "../services/github";
+import { jobCountTotal, jobDurationSeconds } from "../services/metrics";
 
 export type JobPayload = {
   repo: string;
@@ -35,7 +36,14 @@ export type StreamReviewDeps = {
   logLine: (line: string) => Promise<void>;
 };
 
-export const streamReviewForJob = async (config: AppConfig, job: ProgressJobLike, dbJobId: number, prompt: string, deps: StreamReviewDeps) => {
+export const streamReviewForJob = async (
+  config: AppConfig,
+  job: ProgressJobLike,
+  dbJobId: number,
+  prompt: string,
+  deps: StreamReviewDeps,
+  opts?: { forceLive?: boolean }
+) => {
   let partialText = "";
   let lastPersistAt = 0;
 
@@ -48,6 +56,7 @@ export const streamReviewForJob = async (config: AppConfig, job: ProgressJobLike
 
   const result: FinalReviewResult = await streamReview(config, {
     prompt,
+    forceLive: opts?.forceLive,
     metadata: { jobId: dbJobId },
     onChunk: async (chunk) => {
       if (chunk.type === "progress") {
@@ -308,7 +317,8 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
               .catch(() => undefined);
           },
           logLine: async (line) => logJobLine(dbJobId, line)
-        }
+        },
+        { forceLive: liveRequired }
       );
 
       const inlineSuggestions = findingsToInlineSuggestions(result.findings);
@@ -416,6 +426,11 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
       });
       await logJobLine(dbJobId, `AI review complete (inline=${inlineSuggestions.length})`);
       await publishSocketEvent({ type: "job.updated", payload: { id: dbJobId, status: "done", finishedAt: new Date().toISOString() } });
+      jobCountTotal.inc({ status: "done" });
+      if (job.timestamp) {
+        const duration = Math.max(0, (Date.now() - job.timestamp) / 1000);
+        jobDurationSeconds.observe(duration);
+      }
       logger.info("metrics.job.success", { jobId: dbJobId, pr: job.data.prNumber });
     },
     { connection }
@@ -433,6 +448,11 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
     await publishSocketEvent({ type: "job.failed", payload: { id: dbJobId, error: err.message } });
     logger.error("job.failed", { jobId: dbJobId, error: err.message });
     Sentry.captureException(err);
+    jobCountTotal.inc({ status: "failed" });
+    if (job.timestamp) {
+      const duration = Math.max(0, (Date.now() - job.timestamp) / 1000);
+      jobDurationSeconds.observe(duration);
+    }
     logger.info("metrics.job.failed", { jobId: dbJobId });
 
     const attempts = job?.opts?.attempts ?? 1;

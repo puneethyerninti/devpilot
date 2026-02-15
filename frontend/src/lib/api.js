@@ -5,16 +5,14 @@ const api = axios.create({
     baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:4000",
     withCredentials: true
 });
-const demoToken = import.meta.env.VITE_DEMO_TOKEN;
-if (demoToken) {
-    api.defaults.headers.common.Authorization = `Bearer ${demoToken}`;
-}
 export const useJobsQuery = (params) => useQuery({
-    queryKey: ["jobs", params],
+    queryKey: ["jobs", { status: params.status }],
     queryFn: async () => {
-        const res = await api.get("/api/jobs", { params });
+        const { enabled: _enabled, ...queryParams } = params;
+        const res = await api.get("/api/jobs", { params: queryParams });
         return res.data.data.jobs;
-    }
+    },
+    enabled: params.enabled ?? true
 });
 export const useJobQuery = (id) => useQuery({
     queryKey: ["job", id],
@@ -48,12 +46,24 @@ export const useRunAi = () => {
         }
     });
 };
-export const useWorkersQuery = () => useQuery({
+export const useRunJob = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (payload) => {
+            await api.post(`/api/jobs/run`, payload);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        }
+    });
+};
+export const useWorkersQuery = (options) => useQuery({
     queryKey: ["workers"],
     queryFn: async () => {
         const res = await api.get("/api/workers");
         return res.data.data;
-    }
+    },
+    enabled: options?.enabled ?? true
 });
 export const useReposQuery = () => useQuery({
     queryKey: ["repos"],
@@ -71,10 +81,11 @@ export const useMeQuery = () => useQuery({
         }
         catch (error) {
             if (axios.isAxiosError(error) && error.response?.status === 401) {
-                return undefined;
+                return null;
             }
             throw error;
         }
     },
     retry: false
 });
+export { api };

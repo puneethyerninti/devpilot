@@ -5,8 +5,9 @@ import type { QueryClient } from "@tanstack/react-query";
 export type SocketMessage =
   | { type: "job.created"; payload: { id: number } }
   | { type: "job.updated"; payload: { id: number; status: string; startedAt?: string; finishedAt?: string; error?: string } }
+  | { type: "job.progress"; payload: { id: number; progress: number } }
   | { type: "job.log"; payload: { id: number; line: string; ts: string } }
-  | { type: "job.completed"; payload: { id: number } }
+  | { type: "job.completed"; payload: { id: number; summary?: string; tokenCount?: number; costCents?: number } }
   | { type: "job.failed"; payload: { id: number; error?: string } }
   | { type: "worker.status"; payload: { workerId: string; status: string; updatedAt: string; queueDepth?: number; currentJobId?: number | null } };
 
@@ -29,6 +30,19 @@ const updateJobDetailStatus = (
       error: payload.error ?? (data as Record<string, unknown>).error,
       startedAt: payload.startedAt ?? (data as Record<string, unknown>).startedAt,
       finishedAt: payload.finishedAt ?? (data as Record<string, unknown>).finishedAt
+    };
+  });
+};
+
+const updateJobProgress = (queryClient: QueryClient, payload: { id: number; progress: number }) => {
+  const key = payload.id.toString();
+  queryClient.setQueryData<Record<string, unknown> | undefined>(["job", key], (data) => {
+    if (!data) return data;
+    return {
+      ...data,
+      progress: payload.progress,
+      status: payload.progress >= 100 ? (data.status as string) : "processing",
+      uiStatus: payload.progress >= 100 ? (data.uiStatus as string) : "running"
     };
   });
 };
@@ -87,6 +101,23 @@ export const initRealtime = (queryClient: QueryClient) => {
       case "job.failed":
         applyJobListPatch(queryClient);
         if (message.type === "job.updated") updateJobDetailStatus(queryClient, message.payload);
+        if (message.type === "job.completed") {
+          const id = message.payload.id.toString();
+          queryClient.setQueryData<Record<string, unknown> | undefined>(["job", id], (data) => {
+            if (!data) return data;
+            return {
+              ...data,
+              progress: 100,
+              summary: message.payload.summary ?? data.summary,
+              tokenCount: message.payload.tokenCount ?? data.tokenCount,
+              costCents: message.payload.costCents ?? data.costCents,
+              uiStatus: "reviewed"
+            };
+          });
+        }
+        break;
+      case "job.progress":
+        updateJobProgress(queryClient, message.payload);
         break;
       case "job.log":
         appendJobLog(queryClient, message.payload);

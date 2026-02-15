@@ -15,6 +15,7 @@ import { streamReview } from "../openai";
 
 const makeConfig = (partial?: Partial<AppConfig>): AppConfig => {
   return {
+    ...partial,
     nodeEnv: "test",
     port: 4000,
     frontendUrl: "http://localhost:5173",
@@ -29,12 +30,14 @@ const makeConfig = (partial?: Partial<AppConfig>): AppConfig => {
     sessionSecret: "secret",
     jwtIssuer: "devpilot",
     aiMode: "mock",
+    enableOpenAi: false,
     openAiKey: undefined,
     aiModel: "gpt-4.1-mini",
     sentryDsn: undefined,
     socketRedisHost: "localhost",
     socketRedisPort: 6379,
-    ...partial
+    apiRateLimitWindowMs: 60_000,
+    apiRateLimitMax: 120
   };
 };
 

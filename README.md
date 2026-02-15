@@ -15,7 +15,6 @@ DevPilot Phase 3 delivers an end-to-end dashboard for monitoring AI pull-request
    ```bash
    pnpm install
    cp backend/.env.example backend/.env
-   # set DEMO_TOKEN in backend/.env and VITE_DEMO_TOKEN in frontend/.env.local (same value)
    docker-compose up -d # deps only; add --profile app to run backend/worker/frontend containers
    pnpm prisma:setup   # convenience script, see package.json
    pnpm dev:all        # concurrently runs backend + frontend
@@ -35,14 +34,20 @@ DevPilot Phase 3 delivers an end-to-end dashboard for monitoring AI pull-request
 
 4. **Quick smoke (Windows PowerShell)**
    ```powershell
-   $env:DEMO_TOKEN="demo-token"
+   $env:API_TOKEN="<signed_jwt_token>"
    ./scripts/smoke-phase1.ps1
    ```
 
    **Quick smoke (bash)**
    ```bash
-   DEMO_TOKEN=demo-token ./scripts/smoke-phase1.sh
+   API_TOKEN=<signed_jwt_token> ./scripts/smoke-phase1.sh
    ```
+
+## Local dev modes
+- **Real OpenAI mode (required)**
+   - Set `AI_MODE=live`, `ENABLE_OPENAI=true`, and `OPENAI_API_KEY`.
+   - `retry`, `run-ai`, and webhook-triggered jobs now force live processing.
+   - Optional: set `OPENAI_COST_CENTS_PER_1K_TOKENS` to track estimated cost.
 
 ## Manual Setup Checklist
 - **GitHub OAuth App**
@@ -53,7 +58,7 @@ DevPilot Phase 3 delivers an end-to-end dashboard for monitoring AI pull-request
 - **Postgres & Redis**: `docker-compose up -d` provisions both. Expose externally only behind VPN/tunnel.
 - **JWT secret**: Generate a long random string (`openssl rand -hex 32`) for `SESSION_SECRET`.
 - **Sentry**: Optional `SENTRY_DSN`; backend/worker auto-initialize when present.
-- **OpenAI Mocking**: `AI_MODE=mock` avoids live OpenAI calls. Real key via `OPENAI_API_KEY`.
+- **OpenAI**: set `OPENAI_API_KEY` and keep `AI_MODE=live`.
 
 ## Environment Variables (backend/.env)
 ```
@@ -70,7 +75,7 @@ GITHUB_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 SESSION_SECRET=
 JWT_ISSUER=devpilot
 OPENAI_API_KEY=
-AI_MODE=mock
+AI_MODE=live
 SENTRY_DSN=
 QUEUE_NAME=pr-jobs
 SOCKET_REDIS_HOST=localhost
@@ -106,14 +111,26 @@ All REST responses follow `{ ok: boolean, data?: any, error?: string }`.
 
 ### Example curl commands
 ```bash
-AUTH="Authorization: Bearer ${DEMO_TOKEN:-demo-token}"
+AUTH="Authorization: Bearer ${API_TOKEN}"
 curl -H "$AUTH" http://localhost:4000/api/jobs
 curl -H "$AUTH" http://localhost:4000/api/jobs/1
 curl -X POST -H "$AUTH" http://localhost:4000/api/jobs/1/retry
 curl -X POST http://localhost:4000/api/jobs/run \
   -H "Content-Type: application/json" \
    -H "$AUTH" \
-   -d '{"repo":"devpilot/repo","prNumber":42,"headSha":"abc123"}'
+   -d '{"repo":"devpilot/repo","prNumber":42,"headSha":"abc123","installationId":12345678}'
+```
+
+### PowerShell API commands
+Use `curl.exe` (not PowerShell `curl` alias) or `Invoke-RestMethod`.
+
+```powershell
+$TOKEN = "<YOUR_BEARER_TOKEN>"
+$AUTH = "Bearer $TOKEN"
+
+curl.exe -H "Authorization: $AUTH" http://localhost:4000/api/jobs
+
+Invoke-RestMethod -Method Post -Uri "http://localhost:4000/api/jobs/run" -Headers @{ Authorization = $AUTH } -ContentType "application/json" -Body '{"repo":"owner/repo","prNumber":42,"headSha":"abc123","installationId":12345678}'
 ```
 
 ## Socket.IO Events

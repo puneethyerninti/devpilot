@@ -6,10 +6,15 @@ type Job = {
   id: number;
   repoFullName: string;
   status: string;
+  uiStatus?: string;
   summary?: string;
   aiReviewMd?: string;
   riskScore?: number;
   progress?: number;
+  tokenCount?: number;
+  costCents?: number;
+  postedToGithubAt?: string;
+  postedToGithubError?: string;
   workerId?: string | null;
   prNumber?: number;
   createdAt: string;
@@ -34,18 +39,15 @@ const api = axios.create({
   withCredentials: true
 });
 
-const demoToken = import.meta.env.VITE_DEMO_TOKEN;
-if (demoToken) {
-  api.defaults.headers.common.Authorization = `Bearer ${demoToken}`;
-}
-
-export const useJobsQuery = (params: { status?: string }) =>
+export const useJobsQuery = (params: { status?: string; enabled?: boolean }) =>
   useQuery({
-    queryKey: ["jobs", params],
+    queryKey: ["jobs", { status: params.status }],
     queryFn: async () => {
-      const res = await api.get<Envelope<{ jobs: Job[] }>>("/api/jobs", { params });
+      const { enabled: _enabled, ...queryParams } = params;
+      const res = await api.get<Envelope<{ jobs: Job[] }>>("/api/jobs", { params: queryParams });
       return res.data.data.jobs;
-    }
+    },
+    enabled: params.enabled ?? true
   });
 
 export const useJobQuery = (id: string) =>
@@ -84,13 +86,26 @@ export const useRunAi = () => {
   });
 };
 
-export const useWorkersQuery = () =>
+export const useRunJob = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { repo: string; prNumber: number; headSha: string; installationId?: number }) => {
+      await api.post(`/api/jobs/run`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    }
+  });
+};
+
+export const useWorkersQuery = (options?: { enabled?: boolean }) =>
   useQuery({
     queryKey: ["workers"],
     queryFn: async () => {
       const res = await api.get<Envelope<Array<{ workerId: string; status: string; lastHeartbeat: string; currentJobId: number | null; queueDepth: number | null }>>>("/api/workers");
       return res.data.data;
-    }
+    },
+    enabled: options?.enabled ?? true
   });
 
 export const useReposQuery = () =>
@@ -111,11 +126,13 @@ export const useMeQuery = () =>
         return res.data.data;
       } catch (error) {
         if (axios.isAxiosError(error) && error.response?.status === 401) {
-          return undefined;
+          return null;
         }
         throw error;
       }
     },
     retry: false
   });
+
+export { api };
 

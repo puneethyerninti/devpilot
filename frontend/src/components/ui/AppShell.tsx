@@ -49,23 +49,27 @@ const AppShell = ({
   maxWidth = '6xl',
   className,
 }: AppShellProps) => {
+  const hasTopBar = Boolean(breadcrumbs || onSearch || topBarActions);
+
   return (
-    <div className={cn('min-h-screen bg-base text-text-primary', className)}>
+    <div className={cn('min-h-screen bg-base text-text-primary md:grid md:grid-cols-[15rem_minmax(0,1fr)]', className)}>
       {/* Fixed Sidebar Navigation */}
       <Sidebar logo={logo} appName={appName} navItems={navItems} footer={sidebarFooter} />
 
-      {/* Main Content Area with left margin for sidebar */}
-      <main className="flex-1 min-w-0 md:ml-60">
+      {/* Main Content Area */}
+      <main className="min-w-0">
         {/* Fixed Top Navigation Bar */}
-        <TopBar
-          breadcrumbs={breadcrumbs}
-          searchPlaceholder={searchPlaceholder}
-          onSearch={onSearch}
-          actions={topBarActions}
-        />
+        {hasTopBar && (
+          <TopBar
+            breadcrumbs={breadcrumbs}
+            searchPlaceholder={searchPlaceholder}
+            onSearch={onSearch}
+            actions={topBarActions}
+          />
+        )}
 
         {/* Page Content with top padding for fixed topbar */}
-        <div className={cn('mx-auto px-6 pt-[72px] pb-8 space-y-6', maxWidthClasses[maxWidth])}>
+        <div className={cn('mx-auto px-6 pb-8 space-y-6', hasTopBar ? 'pt-[72px]' : 'pt-6', maxWidthClasses[maxWidth])}>
           {children}
         </div>
       </main>

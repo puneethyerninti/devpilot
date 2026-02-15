@@ -2,6 +2,7 @@
 import "dotenv/config";
 import http from "http";
 import express from "express";
+import type { Request } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
@@ -11,14 +12,22 @@ import { loadConfig } from "./config";
 import { logger } from "./utils/logger";
 import { createJobQueue } from "./queues";
 import { attachUser, createAuthRouter } from "./middleware/auth";
-import { demoAuth } from "./middleware/demoAuth";
 import { prisma } from "./prisma/client";
 import { asyncHandler } from "./utils/asyncHandler";
 import { createSocketServer } from "./ws/socket";
 import { sendOk } from "./utils/http";
 import { createWebhookRouter } from "./http/routes/webhooks";
+import rateLimit from "express-rate-limit";
+import { metricsRegistry } from "./services/metrics";
 
 const config = loadConfig();
+
+const isAllowedOrigin = (origin?: string) => {
+  if (!origin) return true;
+  if (origin === config.frontendUrl) return true;
+  if (config.nodeEnv !== "production" && /^https?:\/\/localhost:\d+$/.test(origin)) return true;
+  return false;
+};
 
 if (config.sentryDsn) {
   // Initialize Sentry for background instrumentation; manual captures only.
@@ -26,7 +35,18 @@ if (config.sentryDsn) {
 }
 
 export const app = express();
-app.use(cors({ origin: config.frontendUrl, credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`CORS origin not allowed: ${origin ?? "unknown"}`));
+    },
+    credentials: true
+  })
+);
 app.use(helmet());
 app.use(
   express.json({
@@ -38,8 +58,22 @@ app.use(
 );
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(demoAuth);
 app.use(attachUser(config));
+
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: config.apiRateLimitWindowMs,
+    max: config.apiRateLimitMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req: Request) => {
+      const user = req.user?.sub ?? "anon";
+      const repo = typeof req.body?.repo === "string" ? req.body.repo : req.params?.repo ?? "-";
+      return `${user}:${repo}:${req.ip}`;
+    }
+  })
+);
 
 const jobQueue = createJobQueue(config);
 
@@ -59,8 +93,9 @@ app.get(
 
 app.get(
   "/metrics",
-  (_req, res) => {
-    res.type("text/plain").send("devpilot_up 1\n");
+  async (_req, res) => {
+    res.set("Content-Type", metricsRegistry.contentType);
+    res.send(await metricsRegistry.metrics());
   }
 );
 

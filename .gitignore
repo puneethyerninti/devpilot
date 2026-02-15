@@ -32,3 +32,4 @@ mongo-data/
 qdrant-data/
 .history/
 node_modules/
+backend/.env.bak

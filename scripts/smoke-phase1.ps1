@@ -1,10 +1,10 @@
 param(
   [string]$ApiUrl = "http://localhost:4000",
-  [string]$DemoToken = $env:DEMO_TOKEN
+  [string]$ApiToken = $env:API_TOKEN
 )
 
-if (-not $DemoToken) { throw "DEMO_TOKEN is required" }
-$headers = @{ Authorization = "Bearer $DemoToken" }
+if (-not $ApiToken) { throw "API_TOKEN is required" }
+$headers = @{ Authorization = "Bearer $ApiToken" }
 
 Write-Host "[smoke] checking /health" -ForegroundColor Cyan
 Invoke-RestMethod -Uri "$ApiUrl/health" -Headers $headers -Method Get | Out-Null

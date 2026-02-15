@@ -2,10 +2,15 @@
 set -euo pipefail
 
 API_URL=${API_URL:-http://localhost:4000}
-DEMO_TOKEN=${DEMO_TOKEN:-demo-token}
-AUTH_HEADER="Authorization: Bearer ${DEMO_TOKEN}"
+API_TOKEN=${API_TOKEN:-}
 
 fail() { echo "[smoke] $1" >&2; exit 1; }
+
+if [[ -z "${API_TOKEN}" ]]; then
+	fail "API_TOKEN is required"
+fi
+
+AUTH_HEADER="Authorization: Bearer ${API_TOKEN}"
 
 curl -sf -H "${AUTH_HEADER}" "${API_URL}/health" >/dev/null || fail "health failed"
 

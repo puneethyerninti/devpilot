@@ -12,17 +12,65 @@ import Tabs from '../components/ui/Tabs';
 import SearchBar from '../components/ui/SearchBar';
 import ProgressBar from '../components/ui/ProgressBar';
 import AnimatedCounter from '../components/ui/AnimatedCounter';
-import { useJobsQuery } from '../lib/api';
+import { useJobsQuery, useMeQuery, useRunJob } from '../lib/api';
 
 const JobsPage = (): JSX.Element => {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<'all' | 'queued' | 'processing' | 'done' | 'failed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const { data: jobs, isLoading } = useJobsQuery({ status: filter === 'all' ? undefined : filter });
+  const { data: jobs, isLoading, isError, refetch } = useJobsQuery({ status: filter === 'all' ? undefined : filter });
+  const { data: me } = useMeQuery();
+  const { mutate: runJob, isPending: isCreatingJob } = useRunJob();
+
+  const openCreateJobPrompt = () => {
+    const repo = window.prompt('Repository (owner/repo)');
+    if (!repo) return;
+    const prNumberRaw = window.prompt('Pull request number');
+    if (!prNumberRaw) return;
+    const headSha = window.prompt('Head SHA (commit hash)');
+    if (!headSha) return;
+    const installationIdRaw = window.prompt('GitHub installation ID (required for live review)');
+    if (!installationIdRaw) return;
+
+    const prNumber = Number(prNumberRaw);
+    const installationId = Number(installationIdRaw);
+
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      window.alert('Invalid pull request number.');
+      return;
+    }
+
+    if (!Number.isInteger(installationId) || installationId <= 0) {
+      window.alert('Invalid installation ID.');
+      return;
+    }
+
+    runJob(
+      { repo, prNumber, headSha, installationId },
+      {
+        onError: () => {
+          window.alert('Failed to create job. Check your role and payload values.');
+        }
+      }
+    );
+  };
+
+  const normalizedJobs = useMemo(() => {
+    return (jobs ?? []).map((job) => {
+      const repoFullName = typeof job.repoFullName === 'string' && job.repoFullName.trim().length > 0
+        ? job.repoFullName
+        : 'unknown/repository';
+
+      return {
+        ...job,
+        repoFullName,
+      };
+    });
+  }, [jobs]);
 
   const filteredJobs = useMemo(() => {
     if (!jobs) return [];
-    let result = jobs;
+    let result = normalizedJobs;
     
     if (filter !== 'all') {
       result = result.filter((job) => job.status === filter);
@@ -36,14 +84,14 @@ const JobsPage = (): JSX.Element => {
     }
     
     return result;
-  }, [jobs, filter, searchQuery]);
+  }, [jobs, normalizedJobs, filter, searchQuery]);
 
   const stats = useMemo(() => {
-    const base = { total: jobs?.length ?? 0, queued: 0, processing: 0, done: 0, failed: 0, avgRisk: 0 };
-    if (!jobs?.length) return base;
+    const base = { total: normalizedJobs.length, queued: 0, processing: 0, done: 0, failed: 0, avgRisk: 0 };
+    if (!normalizedJobs.length) return base;
     let riskSum = 0;
     let riskCount = 0;
-    jobs.forEach((job) => {
+    normalizedJobs.forEach((job) => {
       const key = job.status as keyof typeof base;
       if (key in base) base[key] += 1;
       if (typeof job.riskScore === 'number') {
@@ -53,7 +101,7 @@ const JobsPage = (): JSX.Element => {
     });
     base.avgRisk = riskCount ? Number((riskSum / riskCount).toFixed(2)) : 0;
     return base;
-  }, [jobs]);
+  }, [normalizedJobs]);
 
   const getStatusBadgeVariant = (status: string) => {
     switch (status) {
@@ -83,11 +131,17 @@ const JobsPage = (): JSX.Element => {
           title="Job Control Room"
           subtitle="Real-time queue, risk signals, and worker handoffs"
         />
-        <Button variant="primary" size="md" className="glass-strong shadow-lg hover:shadow-xl">
+        <Button
+          variant="primary"
+          size="md"
+          className="glass-strong shadow-lg hover:shadow-xl"
+          onClick={openCreateJobPrompt}
+          disabled={me?.role !== 'admin' || isCreatingJob}
+        >
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
           </svg>
-          New Job
+          {isCreatingJob ? 'Creating...' : 'New Job'}
         </Button>
       </div>
 
@@ -189,6 +243,20 @@ const JobsPage = (): JSX.Element => {
         size="lg"
       />
 
+      {isError && (
+        <Card variant="outline">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-text-primary">Couldn’t load jobs right now</p>
+              <p className="text-xs text-text-secondary">Please check backend connectivity and try refreshing.</p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {/* Tabs for Filtering */}
       <Tabs
         tabs={tabs}
@@ -198,7 +266,7 @@ const JobsPage = (): JSX.Element => {
         size="md"
       >
         {(activeTab) => (
-          <Card variant="elevated" className="glass-card">
+          <Card variant="elevated" className="glass-card" contentClassName="p-4 sm:p-5">
             {isLoading ? (
               <div className="space-y-4">
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -222,7 +290,7 @@ const JobsPage = (): JSX.Element => {
                 title="No jobs found"
                 description={searchQuery ? "No jobs match your search query." : filter === 'all' ? "No jobs have been created yet." : `No jobs with status "${filter}".`}
                 actionLabel="Create First Job"
-                onAction={() => {/* TODO: Implement create job */}}
+                onAction={openCreateJobPrompt}
               />
             ) : (
               <div className="space-y-3">
@@ -238,7 +306,7 @@ const JobsPage = (): JSX.Element => {
                       <div className="flex-shrink-0">
                         <div className="h-12 w-12 rounded-xl bg-gradient-primary flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
                           <span className="text-lg font-bold text-white">
-                            {job.repoFullName.split('/')[0][0].toUpperCase()}
+                            {job.repoFullName.split('/')[0]?.charAt(0)?.toUpperCase() || '?'}
                           </span>
                         </div>
                       </div>
@@ -264,8 +332,8 @@ const JobsPage = (): JSX.Element => {
                           Risk: {job.riskScore}
                         </Badge>
                       )}
-                      <Badge variant={getStatusBadgeVariant(job.status)}>
-                        {job.status}
+                      <Badge variant={getStatusBadgeVariant(job.uiStatus ?? job.status)}>
+                        {job.uiStatus ?? job.status}
                       </Badge>
                       <svg className="w-5 h-5 text-text-tertiary group-hover:text-primary group-hover:translate-x-1 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

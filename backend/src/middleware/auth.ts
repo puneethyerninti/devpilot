@@ -6,6 +6,13 @@ import { prisma } from "../prisma/client";
 import { asyncHandler } from "../utils/asyncHandler";
 import { sendError, sendOk } from "../utils/http";
 import type { AppConfig } from "../config";
+import {
+  buildGitHubAuthorizeUrl,
+  createOAuthState,
+  exchangeCodeForAccessToken,
+  fetchGitHubProfile,
+  verifyOAuthState
+} from "../auth/githubOauth";
 
 export type UserRole = "viewer" | "operator" | "admin";
 
@@ -45,14 +52,14 @@ export const createAuthRouter = (config: AppConfig) => {
   const router = Router();
 
   router.get("/auth/github", (req, res) => {
-    const state = encodeURIComponent(jwt.sign({ nonce: Date.now() }, config.sessionSecret, { expiresIn: "10m" }));
+    if (!config.githubClientId || !config.githubClientSecret) {
+      return sendError(res, "GitHub OAuth not configured", 503);
+    }
+
+    const state = createOAuthState(config);
     const origin = `${req.protocol}://${req.get("host")}`;
-    const url = new URL("https://github.com/login/oauth/authorize");
-    url.searchParams.set("client_id", config.githubClientId);
-    url.searchParams.set("scope", "read:user user:email repo");
-    url.searchParams.set("redirect_uri", `${origin}/auth/github/callback`);
-    url.searchParams.set("state", state);
-    res.redirect(url.toString());
+    const url = buildGitHubAuthorizeUrl(config, origin, state);
+    res.redirect(url);
   });
 
   router.get(
@@ -66,31 +73,17 @@ export const createAuthRouter = (config: AppConfig) => {
         return sendError(res, "Missing OAuth state", 400);
       }
       try {
-        jwt.verify(decodeURIComponent(state), config.sessionSecret);
+        verifyOAuthState(state, config);
       } catch {
         return sendError(res, "Invalid OAuth state", 400);
       }
 
-      const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          client_id: config.githubClientId,
-          client_secret: config.githubClientSecret,
-          code
-        })
-      }).then((r) => r.json() as Promise<{ access_token?: string }>);
-
-      if (!tokenResponse.access_token) {
+      const accessToken = await exchangeCodeForAccessToken(config, code);
+      if (!accessToken) {
         return sendError(res, "GitHub token exchange failed", 401);
       }
 
-      const ghProfile = await fetch("https://api.github.com/user", {
-        headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
-      }).then((r) => r.json() as Promise<{ id: number; login: string; name?: string; avatar_url?: string }>);
+      const ghProfile = await fetchGitHubProfile(accessToken);
 
       const user = await prisma.user.upsert({
         where: { githubId: ghProfile.id.toString() },
@@ -131,9 +124,11 @@ export const createAuthRouter = (config: AppConfig) => {
 
 export const attachUser = (config: AppConfig) => {
   return (req: Request, _res: Response, next: NextFunction) => {
-    // Respect any user injected earlier (e.g., demoAuth in dev)
     if (req.user) return next();
-    const token = req.cookies?.[SESSION_COOKIE] as string | undefined;
+    const cookieToken = req.cookies?.[SESSION_COOKIE] as string | undefined;
+    const header = req.get("authorization") ?? "";
+    const bearerToken = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+    const token = bearerToken ?? cookieToken;
     if (!token) {
       return next();
     }

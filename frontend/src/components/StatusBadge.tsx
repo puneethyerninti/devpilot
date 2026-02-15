@@ -14,6 +14,8 @@ const statusStyles: Record<string, { bg: string; text: string; dot: string; labe
   processing: { bg: 'bg-blue-50 dark:bg-blue-900/40', text: 'text-blue-700 dark:text-blue-100', dot: 'bg-blue-500', label: 'Processing' },
   running: { bg: 'bg-blue-50 dark:bg-blue-900/40', text: 'text-blue-700 dark:text-blue-100', dot: 'bg-blue-500', label: 'Running' },
   done: { bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-100', dot: 'bg-green-500', label: 'Done' },
+  reviewed: { bg: 'bg-indigo-50 dark:bg-indigo-900/30', text: 'text-indigo-700 dark:text-indigo-100', dot: 'bg-indigo-500', label: 'Reviewed' },
+  posted: { bg: 'bg-emerald-50 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-100', dot: 'bg-emerald-500', label: 'Posted' },
   completed: { bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-100', dot: 'bg-green-500', label: 'Completed' },
   failed: { bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-100', dot: 'bg-red-500', label: 'Failed' },
   online: { bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-100', dot: 'bg-green-500', label: 'Online' },

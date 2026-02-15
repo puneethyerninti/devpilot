@@ -28,11 +28,14 @@ const makeConfig = (): AppConfig => {
     sessionSecret: "secret",
     jwtIssuer: "devpilot",
     aiMode: "mock",
+    enableOpenAi: false,
     openAiKey: undefined,
     aiModel: "gpt-4.1-mini",
     sentryDsn: undefined,
     socketRedisHost: "localhost",
-    socketRedisPort: 6379
+    socketRedisPort: 6379,
+    apiRateLimitWindowMs: 60_000,
+    apiRateLimitMax: 120
   };
 };
 

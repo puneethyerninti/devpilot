@@ -9,6 +9,7 @@ const maxWidthClasses = {
     '5xl': 'max-w-5xl',
 };
 const AppShell = ({ children, logo, appName, navItems, sidebarFooter, breadcrumbs, searchPlaceholder, onSearch, topBarActions, maxWidth = '6xl', className, }) => {
-    return (_jsx("div", { className: cn('min-h-screen bg-base text-text-primary', className), children: _jsxs("div", { className: "flex", children: [_jsx(Sidebar, { logo: logo, appName: appName, navItems: navItems, footer: sidebarFooter }), _jsxs("main", { className: "flex-1 min-w-0", children: [_jsx(TopBar, { breadcrumbs: breadcrumbs, searchPlaceholder: searchPlaceholder, onSearch: onSearch, actions: topBarActions }), _jsx("div", { className: cn('mx-auto px-6 py-8 space-y-6', maxWidthClasses[maxWidth]), children: children })] })] }) }));
+    const hasTopBar = Boolean(breadcrumbs || onSearch || topBarActions);
+    return (_jsxs("div", { className: cn('min-h-screen bg-base text-text-primary md:grid md:grid-cols-[15rem_minmax(0,1fr)]', className), children: [_jsx(Sidebar, { logo: logo, appName: appName, navItems: navItems, footer: sidebarFooter }), _jsxs("main", { className: "min-w-0", children: [hasTopBar && (_jsx(TopBar, { breadcrumbs: breadcrumbs, searchPlaceholder: searchPlaceholder, onSearch: onSearch, actions: topBarActions })), _jsx("div", { className: cn('mx-auto px-6 pb-8 space-y-6', hasTopBar ? 'pt-[72px]' : 'pt-6', maxWidthClasses[maxWidth]), children: children })] })] }));
 };
 export default AppShell;

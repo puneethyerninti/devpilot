@@ -10,6 +10,7 @@ export default defineConfig({
     host: "0.0.0.0"
   },
   resolve: {
+    extensions: ['.ts', '.tsx', '.mjs', '.js', '.mts', '.jsx', '.json'],
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url))
     }

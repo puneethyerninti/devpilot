@@ -1,6 +1,7 @@
 import type { Octokit } from "@octokit/rest";
 import type { AppConfig } from "../config";
 import { logger } from "../utils/logger";
+import { githubApiRequestsTotal } from "./metrics";
 
 export type GitHubReviewComment = {
   file: string;
@@ -40,6 +41,7 @@ export const postSummaryComment = async (
   params: { owner: string; repo: string; prNumber: number; body: string }
 ) => {
   const { getInstallationClient } = await import("../github/githubAppClient.js");
+  githubApiRequestsTotal.inc({ operation: "issues.createComment" });
   const octokit = await getInstallationClient(config, installationId);
   await withRateLimitRetry(() => octokit.issues.createComment({ owner: params.owner, repo: params.repo, issue_number: params.prNumber, body: params.body }));
 };
@@ -51,6 +53,7 @@ export const postReviewComments = async (
 ) => {
   if (!params.comments.length) return;
   const { getInstallationClient } = await import("../github/githubAppClient.js");
+  githubApiRequestsTotal.inc({ operation: "pulls.createReviewComment" });
   const octokit = await getInstallationClient(config, installationId);
   await postReviewCommentsWithOctokit(octokit, params);
 };
@@ -62,7 +65,9 @@ export const postReviewCommentsWithOctokit = async (
   if (!params.comments.length) return;
 
   const { data: pr } = await withRateLimitRetry(() =>
+    (githubApiRequestsTotal.inc({ operation: "pulls.get" }),
     octokit.pulls.get({ owner: params.owner, repo: params.repo, pull_number: params.prNumber })
+    )
   );
   const commitId = (pr as any)?.head?.sha as string | undefined;
   if (!commitId) {
@@ -71,6 +76,7 @@ export const postReviewCommentsWithOctokit = async (
 
   for (const comment of params.comments) {
     await withRateLimitRetry(() =>
+      (githubApiRequestsTotal.inc({ operation: "pulls.createReviewComment" }),
       octokit.pulls.createReviewComment({
         owner: params.owner,
         repo: params.repo,
@@ -83,6 +89,7 @@ export const postReviewCommentsWithOctokit = async (
         side: "RIGHT",
         body: comment.body
       })
+      )
     );
   }
 };

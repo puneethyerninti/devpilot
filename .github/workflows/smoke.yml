@@ -79,10 +79,15 @@ jobs:
           JWT_ISSUER: devpilot
           GITHUB_CLIENT_ID: placeholder
           GITHUB_CLIENT_SECRET: placeholder
-          DEMO_TOKEN: ci-demo-token
         run: |
           node backend/dist/server.js &
           echo $! > backend-server.pid
+
+      - name: Generate API token
+        id: auth
+        run: |
+          TOKEN=$(node -e "const jwt=require('jsonwebtoken'); process.stdout.write(jwt.sign({sub:'ci-user',role:'admin',login:'ci-bot'}, 'ci-session', {issuer:'devpilot', audience:'devpilot', expiresIn:'30m'}));")
+          echo "api_token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Wait for backend
         run: |
@@ -95,7 +100,7 @@ jobs:
       - name: Smoke test phase1
         env:
           API_URL: http://localhost:4000
-          DEMO_TOKEN: ci-demo-token
+          API_TOKEN: ${{ steps.auth.outputs.api_token }}
         run: bash scripts/smoke-phase1.sh
 
       - name: Stop backend

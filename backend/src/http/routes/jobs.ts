@@ -20,8 +20,25 @@ const progressFor = (status: JobStatus) => {
 const runJobSchema = z.object({
   repo: z.string(),
   prNumber: z.coerce.number(),
-  headSha: z.string().min(6)
+  headSha: z.string().min(6),
+  installationId: z.coerce.number().int().positive().optional()
 });
+
+const idSchema = z.object({ id: z.coerce.number().int().positive() });
+
+const toUiStatus = (job: {
+  status: JobStatus;
+  postedToGithubAt: Date | null;
+  postedToGithubError: string | null;
+}) => {
+  if (job.status === "done") {
+    if (job.postedToGithubAt) return "posted";
+    if (job.postedToGithubError) return "reviewed";
+    return "reviewed";
+  }
+  if (job.status === "processing") return "running";
+  return job.status;
+};
 
 export const createJobRouter = (queue: Queue<JobPayload>) => {
   const router = Router();
@@ -53,10 +70,16 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
         return {
           id: job.id,
           repoFullName: repo.fullName,
+          prNumber: job.prNumber,
           status: job.status,
+          uiStatus: toUiStatus(job),
           summary: job.summary ?? undefined,
           aiReviewMd: job.aiReviewMd ?? undefined,
           riskScore: job.riskScore ?? undefined,
+          tokenCount: job.tokenCount ?? undefined,
+          costCents: job.costCents ?? undefined,
+          postedToGithubAt: job.postedToGithubAt?.toISOString(),
+          postedToGithubError: job.postedToGithubError ?? undefined,
           createdAt: job.createdAt.toISOString(),
           updatedAt: job.updatedAt.toISOString(),
           progress: progressFor(job.status),
@@ -72,10 +95,11 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
     "/:id",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const jobId = Number(req.params.id);
-      if (Number.isNaN(jobId)) {
+      const parsedId = idSchema.safeParse(req.params);
+      if (!parsedId.success) {
         return sendError(res, "Invalid job id", 400);
       }
+      const jobId = parsedId.data.id;
       const job = await prisma.pRJob.findUnique({
         where: { id: jobId },
         include: { files: true, actionLogs: { orderBy: { createdAt: "asc" }, take: 500 }, repo: true }
@@ -101,9 +125,14 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
         headSha: rest.headSha,
         triggeredBy: rest.triggeredBy ?? null,
         status: rest.status,
+        uiStatus: toUiStatus(rest),
         summary: rest.summary ?? undefined,
         aiReviewMd: rest.aiReviewMd ?? undefined,
         riskScore: rest.riskScore ?? undefined,
+        tokenCount: rest.tokenCount ?? undefined,
+        costCents: rest.costCents ?? undefined,
+        postedToGithubAt: rest.postedToGithubAt?.toISOString(),
+        postedToGithubError: rest.postedToGithubError ?? undefined,
         inlineSuggestions: rest.inlineSuggestions ?? undefined,
         createdAt: rest.createdAt.toISOString(),
         updatedAt: rest.updatedAt.toISOString(),
@@ -128,10 +157,11 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
     "/:id/retry",
     requireRole("operator"),
     asyncHandler(async (req, res) => {
-      const jobId = Number(req.params.id);
-      if (Number.isNaN(jobId)) {
+      const parsedId = idSchema.safeParse(req.params);
+      if (!parsedId.success) {
         return sendError(res, "Invalid job id", 400);
       }
+      const jobId = parsedId.data.id;
       const job = await prisma.pRJob.findUnique({ where: { id: jobId }, include: { repo: true } });
       if (!job) {
         return sendError(res, "Job not found", 404);
@@ -140,7 +170,9 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
         repo: job.repo.fullName,
         prNumber: job.prNumber,
         headSha: job.headSha,
-        triggeredBy: req.user!.login
+        triggeredBy: req.user!.login,
+        installationId: job.installationId ?? undefined,
+        forceLive: true
       });
       sendOk(res, { jobId: newJob.id }, 202);
     })
@@ -150,10 +182,11 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
     "/:id/run-ai",
     requireRole("operator"),
     asyncHandler(async (req, res) => {
-      const jobId = Number(req.params.id);
-      if (Number.isNaN(jobId)) {
+      const parsedId = idSchema.safeParse(req.params);
+      if (!parsedId.success) {
         return sendError(res, "Invalid job id", 400);
       }
+      const jobId = parsedId.data.id;
       const job = await prisma.pRJob.findUnique({ where: { id: jobId }, include: { repo: true } });
       if (!job) {
         return sendError(res, "Job not found", 404);
@@ -164,7 +197,8 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
         prNumber: job.prNumber,
         headSha: job.headSha,
         triggeredBy: req.user!.login,
-        installationId: job.installationId ?? undefined
+        installationId: job.installationId ?? undefined,
+        forceLive: true
       });
 
       sendOk(res, { jobId: newJob.id }, 202);
@@ -184,7 +218,9 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
         repo: payload.repo,
         prNumber: payload.prNumber,
         headSha: payload.headSha,
-        triggeredBy: req.user!.login
+        triggeredBy: req.user!.login,
+        installationId: payload.installationId,
+        forceLive: true
       });
       sendOk(res, { jobId: job.id }, 202);
     })

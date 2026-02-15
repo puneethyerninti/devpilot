@@ -1,5 +1,4 @@
 ﻿// API-backed job detail page with premium UI
-import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import MarkdownRenderer from "../components/MarkdownRenderer";
 import '../components/ui/ui-delays.css';
@@ -7,8 +6,7 @@ import StatusBadge from "../components/StatusBadge";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import { LogStream } from "../components/LogStream";
-import { useJobQuery, useMeQuery, useRunAi } from "../lib/api";
-import { joinJobChannel } from "../lib/socket";
+import { useJobQuery, useMeQuery, useRetryJob, useRunAi } from "../lib/api";
 import StatCard from "../components/ui/StatCard";
 import AnimatedStatCard from "../components/ui/AnimatedStatCard";
 import Timeline from "../components/ui/Timeline";
@@ -18,16 +16,15 @@ import { CircularProgress } from "../components/ui/ProgressBar";
 import Avatar from "../components/ui/Avatar";
 import Tooltip from "../components/ui/Tooltip";
 import Badge from "../components/ui/Badge";
+import { useSocket } from "../hooks/useSocket";
 
 export const JobDetail = () => {
   const { id } = useParams();
   const { data, isLoading } = useJobQuery(id ?? "");
   const { mutate: rerunAi, isPending: isRerunning } = useRunAi();
+  const { mutate: retryJob, isPending: isRetrying } = useRetryJob();
   const { data: me } = useMeQuery();
-
-  useEffect(() => {
-    if (id) joinJobChannel(id);
-  }, [id]);
+  useSocket(id);
 
   if (isLoading) {
     return (
@@ -54,7 +51,8 @@ export const JobDetail = () => {
     );
   }
 
-  const statusLabel = data.status === "done" ? "Completed" : data.status;
+  const canonicalStatus = (data.uiStatus ?? data.status) as string;
+  const statusLabel = canonicalStatus === "done" ? "reviewed" : canonicalStatus;
   const canRunAi = me?.role === "operator" || me?.role === "admin";
 
   // Timeline data
@@ -149,6 +147,16 @@ export const JobDetail = () => {
                 )}
               </Button>
             )}
+            {canRunAi && (canonicalStatus === "failed" || data.status === "failed") && (
+              <Button
+                size="md"
+                variant="secondary"
+                disabled={!id || isRetrying}
+                onClick={() => id && retryJob(id)}
+              >
+                {isRetrying ? "Retrying..." : "Retry Failed Job"}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -180,6 +188,32 @@ export const JobDetail = () => {
           subtitle={riskScore > 7 ? 'High Risk' : riskScore > 4 ? 'Medium Risk' : 'Low Risk'}
         />
         
+        <AnimatedStatCard
+          title="Tokens"
+          value={typeof data.tokenCount === "number" ? data.tokenCount : 0}
+          icon={
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h8m-8 4h6" />
+            </svg>
+          }
+          variant="glass"
+          color="primary"
+          subtitle="OpenAI tokens"
+        />
+
+        <AnimatedStatCard
+          title="Estimated Cost"
+          value={typeof data.costCents === "number" ? `$${(data.costCents / 100).toFixed(2)}` : "$0.00"}
+          icon={
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-2.21 0-4 1.12-4 2.5S9.79 13 12 13s4 1.12 4 2.5S14.21 18 12 18m0-10v10" />
+            </svg>
+          }
+          variant="glass"
+          color="success"
+          subtitle="Usage cost"
+        />
+
         <AnimatedStatCard
           title="Pull Request"
           value={`#${data.prNumber}`}

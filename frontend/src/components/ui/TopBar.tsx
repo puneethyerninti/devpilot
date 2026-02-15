@@ -18,6 +18,7 @@ const TopBar = ({ breadcrumbs, searchPlaceholder = 'Search...', onSearch, action
   const [isScrolled, setIsScrolled] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
 
   useEffect(() => {
     const handleScroll = () => {
@@ -84,7 +85,13 @@ const TopBar = ({ breadcrumbs, searchPlaceholder = 'Search...', onSearch, action
               <input
                 type="search"
                 placeholder={searchPlaceholder}
-                onChange={(e) => onSearch(e.target.value)}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    onSearch(searchInput.trim());
+                  }
+                }}
                 className={cn(
                   'relative w-full rounded-lg glass border border-transparent',
                   'pl-9 pr-3 py-2 text-sm text-text-primary font-medium',

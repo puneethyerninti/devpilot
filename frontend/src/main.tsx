@@ -6,7 +6,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import { ThemeProvider } from './components/ThemeProvider';
 import './styles/globals.css';
-import { initRealtime } from './lib/socket';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,8 +16,6 @@ const queryClient = new QueryClient({
   },
 });
 
-initRealtime(queryClient);
-
 const container = document.getElementById('root');
 if (!container) {
   throw new Error('Root container missing');
@@ -28,7 +25,7 @@ ReactDOM.createRoot(container).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <App />
         </BrowserRouter>
       </ThemeProvider>

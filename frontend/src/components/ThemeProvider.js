@@ -10,7 +10,10 @@ export const ThemeProvider = ({ children }) => {
         const saved = window.localStorage.getItem(THEME_KEY);
         if (saved === 'light' || saved === 'dark')
             return saved;
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        if (typeof window.matchMedia === 'function') {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        return 'light';
     });
     useEffect(() => {
         const root = document.documentElement;

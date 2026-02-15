@@ -5,6 +5,7 @@ import { NavItem } from "../components/ui/Sidebar";
  */
 export const navItems: NavItem[] = [
   {
+    section: 'Workloads',
     label: "Jobs",
     to: "/jobs",
     icon: (
@@ -14,6 +15,7 @@ export const navItems: NavItem[] = [
     ),
   },
   {
+    section: 'Workloads',
     label: "Workers",
     to: "/workers",
     icon: (

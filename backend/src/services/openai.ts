@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import { prisma } from "../prisma/client";
 import { logger } from "../utils/logger";
+import { openAiTokensConsumedTotal } from "./metrics";
 
 export type ReviewSeverity = "low" | "medium" | "high" | "critical";
 
@@ -29,6 +30,7 @@ export type ReviewChunk =
 
 export type StreamReviewArgs = {
   prompt: string;
+  forceLive?: boolean;
   metadata: {
     jobId?: number;
     repo?: string;
@@ -77,6 +79,7 @@ const costCentsPer1kTokens = () => {
 };
 
 export const recordCost = async (metadata: { jobId?: number; model: string; tokenCount: number; costCents: number; raw?: unknown }) => {
+  openAiTokensConsumedTotal.inc(metadata.tokenCount);
   if (!metadata.jobId) return;
   await prisma.aiUsage.create({
     data: {
@@ -88,23 +91,6 @@ export const recordCost = async (metadata: { jobId?: number; model: string; toke
       metadata: metadata.raw as never
     }
   });
-};
-
-const mockFinalResult = (prompt: string, model: string): FinalReviewResult => {
-  const tokenCount = estimateTokens(prompt) + 128;
-  const costCents = Math.round((tokenCount / 1000) * costCentsPer1kTokens());
-  const summary = "Mock AI review summary (AI_MODE=mock).";
-  const findings: ReviewFinding[] = [
-    {
-      severity: "medium",
-      file: "src/example.ts",
-      line: 42,
-      suggestedFix: "Add input validation before using the value.",
-      explanation: "This is a mock finding to validate end-to-end streaming."
-    }
-  ];
-  const rawJson = { summary, findings };
-  return { summary, findings, model, rawText: JSON.stringify(rawJson), rawJson, tokenCount, costCents };
 };
 
 const tryParseJson = (text: string): unknown | null => {
@@ -153,20 +139,16 @@ const coerceFinalResult = (text: string, model: string, tokenCount: number, cost
 };
 
 export const streamReview = async (config: AppConfig, args: StreamReviewArgs): Promise<FinalReviewResult> => {
-  const mode = config.aiMode;
-  const enableOpenAi = envFlag("ENABLE_OPENAI", true);
+  const mode = args.forceLive ? "live" : config.aiMode;
+  const enableOpenAi = config.enableOpenAi && envFlag("ENABLE_OPENAI", true);
   const model = args.metadata.model ?? config.aiModel;
 
-  if (mode === "mock" || !enableOpenAi) {
-    const chunks = ["Starting mock analysis...\n", "Reviewing diffs...\n", "Generating summary...\n"];
-    for (let i = 0; i < chunks.length; i++) {
-      await args.onChunk?.({ type: "progress", progress: Math.round(((i + 1) / chunks.length) * 90) });
-      await args.onChunk?.({ type: "delta", text: chunks[i] });
-    }
-    const result = mockFinalResult(args.prompt, model);
-    await recordCost({ jobId: args.metadata.jobId, model, tokenCount: result.tokenCount, costCents: result.costCents, raw: result.rawJson });
-    await args.onFinish?.(result);
-    return result;
+  if (config.nodeEnv !== "test" && (mode !== "live" || !enableOpenAi)) {
+    throw new Error("Live OpenAI mode is required. Set AI_MODE=live and ENABLE_OPENAI=true.");
+  }
+
+  if (mode !== "live" || !enableOpenAi) {
+    throw new Error("Live OpenAI mode is required. Set AI_MODE=live and ENABLE_OPENAI=true.");
   }
 
   const client = createOpenAIClient(config);

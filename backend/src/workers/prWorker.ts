@@ -8,9 +8,14 @@ import { logger } from "../utils/logger";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
 import type { JobPayload } from "../queues/jobProcessor";
+import * as Sentry from "@sentry/node";
 
 const config = loadConfig();
 const workerId = `worker-${process.pid}`;
+
+if (config.sentryDsn) {
+  Sentry.init({ dsn: config.sentryDsn, tracesSampleRate: 0.2 });
+}
 
 const worker = registerJobWorker(config, workerId);
 const queue = new Queue<JobPayload>(config.queueName, { connection: new IORedis(config.redisUrl) });
@@ -52,4 +57,20 @@ process.on("SIGINT", async () => {
   await worker.close();
   await recordStatus("offline");
   process.exit(0);
+});
+
+process.on("uncaughtException", async (err) => {
+  logger.error("worker.uncaught_exception", { err: err.message, stack: err.stack });
+  Sentry.captureException(err);
+  try {
+    await recordStatus("offline");
+  } finally {
+    process.exit(1);
+  }
+});
+
+process.on("unhandledRejection", async (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  logger.error("worker.unhandled_rejection", { err: err.message, stack: err.stack });
+  Sentry.captureException(err);
 });

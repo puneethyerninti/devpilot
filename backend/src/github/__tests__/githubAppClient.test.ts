@@ -22,11 +22,14 @@ describe("getInstallationClient", () => {
     redisUrl: "",
     queueName: "q",
     aiMode: "mock",
+    enableOpenAi: false,
     openAiKey: undefined,
     aiModel: "gpt-4.1-mini",
     sentryDsn: undefined,
     socketRedisHost: "localhost",
-    socketRedisPort: 6379
+    socketRedisPort: 6379,
+    apiRateLimitWindowMs: 60_000,
+    apiRateLimitMax: 120
   } satisfies AppConfig;
 
   beforeEach(() => {

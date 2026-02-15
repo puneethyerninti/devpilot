@@ -1,14 +1,18 @@
-﻿import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+﻿import { useEffect, useMemo } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import AppShell from "./components/ui/AppShell";
 import JobsPage from "./pages/JobsPage";
 import JobDetail from "./pages/JobDetail";
 import WorkersPage from "./pages/WorkersPage";
 import { navItems } from "./config/navigation";
 import ParticleBackground from "./components/ui/ParticleBackground";
+import Badge from './components/ui/Badge';
 import { ToastProvider, useToast } from "./components/ui/Toast";
 import CommandPalette, { useCommandPalette } from "./components/ui/CommandPalette";
 import FloatingActionButton from "./components/ui/FloatingActionButton";
+import { useJobsQuery, useMeQuery, useWorkersQuery } from './lib/api';
+import { initRealtime } from './lib/socket';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -22,8 +26,163 @@ const queryClient = new QueryClient({
 
 const AppContent = (): JSX.Element => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { isOpen, setIsOpen } = useCommandPalette();
+  const { data: me, isLoading: isMeLoading } = useMeQuery();
+  const { data: jobs } = useJobsQuery({ enabled: Boolean(me) });
+  const { data: workers } = useWorkersQuery({ enabled: Boolean(me) });
+
+  useEffect(() => {
+    if (!me) return;
+    initRealtime(queryClient);
+  }, [me, queryClient]);
+
+  const jobsCount = jobs?.length ?? 0;
+  const workersCount = workers?.length ?? 0;
+
+  const navItemsWithBadges = useMemo(
+    () => navItems.map((item) => {
+      if (item.label === 'Jobs') return { ...item, badge: jobsCount };
+      if (item.label === 'Workers') return { ...item, badge: workersCount };
+      return item;
+    }),
+    [jobsCount, workersCount]
+  );
+
+  const breadcrumbs = useMemo(() => {
+    const segments = location.pathname.split('/').filter(Boolean);
+    if (segments.length === 0) {
+      return <span>Dashboard</span>;
+    }
+
+    return (
+      <>
+        <span className="text-text-secondary/70">DevPilot</span>
+        {segments.map((segment, index) => (
+          <span key={`${segment}-${index}`} className="inline-flex items-center gap-2">
+            <span className="text-text-tertiary">/</span>
+            <span className={index === segments.length - 1 ? 'text-text-primary' : 'text-text-secondary'}>
+              {segment === 'jobs' ? 'Jobs' : segment === 'workers' ? 'Workers' : `#${segment}`}
+            </span>
+          </span>
+        ))}
+      </>
+    );
+  }, [location.pathname]);
+
+  const handleGlobalSearch = (query: string) => {
+    const value = query.trim().toLowerCase();
+    if (!value) return;
+
+    const numericId = value.match(/\d+/)?.[0];
+    if (value.startsWith('job') && numericId) {
+      navigate(`/jobs/${numericId}`);
+      return;
+    }
+
+    if (value.includes('worker') || value.includes('agent')) {
+      navigate('/workers');
+      return;
+    }
+
+    navigate('/jobs');
+  };
+
+  const initials = me?.login?.slice(0, 2).toUpperCase() ?? '';
+
+  const topBarActions = me ? (
+    <>
+      {me.role && (
+        <Badge variant={me.role === 'admin' ? 'primary' : 'default'} size="sm">
+          {me.role.toUpperCase()}
+        </Badge>
+      )}
+      <div className="flex items-center gap-2 rounded-lg glass px-2.5 py-1.5">
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-primary-400 to-primary-600 text-[11px] font-semibold text-white">
+          {initials}
+        </span>
+        <div className="leading-tight">
+          <p className="text-xs font-semibold text-text-primary">{me.login}</p>
+          <p className="text-[10px] text-text-secondary">Account</p>
+        </div>
+      </div>
+    </>
+  ) : null;
+
+  const sidebarFooter = me ? (
+    <div className="space-y-2 text-xs">
+      <p className="font-semibold text-text-primary">Auth Session</p>
+      <div className="flex items-center justify-between text-text-secondary">
+        <span>User</span>
+        <span className="truncate pl-2 text-text-primary">{me.login}</span>
+      </div>
+      <div className="flex items-center justify-between text-text-secondary">
+        <span>Role</span>
+        <span className="text-text-primary uppercase">{me.role}</span>
+      </div>
+      <div className="flex items-center justify-between text-text-secondary">
+        <span>Endpoint</span>
+        <span className="text-text-primary">{(import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/^https?:\/\//, "")}</span>
+      </div>
+    </div>
+  ) : null;
+
+  if (isMeLoading) {
+    return (
+      <div className="min-h-screen bg-base text-text-primary flex items-center justify-center">
+        <div className="text-sm text-text-secondary">Checking session…</div>
+      </div>
+    );
+  }
+
+  if (!me) {
+    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+    const loginUrl = new URL("/auth/github", apiBase).toString();
+
+    return (
+      <div className="min-h-screen bg-base text-text-primary flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full rounded-2xl border border-border bg-elevated p-8 space-y-6 shadow-2xl">
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.2em] text-text-secondary">DevPilot Realtime Review</p>
+            <h1 className="text-2xl font-semibold">Connect GitHub to see live PR reviews</h1>
+            <p className="text-sm text-text-secondary">
+              Sign in once to unlock real-time job streaming, worker status, and detailed PR review context.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-text-secondary">Jobs</p>
+              <p className="text-sm font-medium">Live queue updates</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-text-secondary">Workers</p>
+              <p className="text-sm font-medium">Heartbeat + assignment</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-text-secondary">Review Detail</p>
+              <p className="text-sm font-medium">Summary, findings, logs</p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border p-4 space-y-2 bg-base/40">
+            <p className="text-sm font-medium">Auth endpoint</p>
+            <p className="text-xs text-text-secondary break-all">{loginUrl}</p>
+            <p className="text-xs text-text-secondary">If sign-in fails, confirm your GitHub OAuth callback URL is exactly <span className="text-text-primary">http://localhost:4001/auth/github/callback</span>.</p>
+          </div>
+
+          <a
+            href={loginUrl}
+            className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium bg-primary text-white hover:bg-primary-600"
+          >
+            Sign in with GitHub
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   // Command palette commands
   const commands = [
@@ -77,7 +236,7 @@ const AppContent = (): JSX.Element => {
         </svg>
       ),
       label: 'New Job',
-      onClick: () => showToast('info', 'New job creation coming soon!'),
+      onClick: () => navigate('/jobs'),
       variant: 'primary' as const,
     },
     {
@@ -98,7 +257,7 @@ const AppContent = (): JSX.Element => {
         </svg>
       ),
       label: 'Settings',
-      onClick: () => showToast('info', 'Settings panel coming soon!'),
+      onClick: () => navigate('/workers'),
       variant: 'warning' as const,
     },
   ];
@@ -108,7 +267,12 @@ const AppContent = (): JSX.Element => {
       <ParticleBackground />
       <AppShell
         appName="DevPilot"
-        navItems={navItems}
+        navItems={navItemsWithBadges}
+        sidebarFooter={sidebarFooter}
+        breadcrumbs={breadcrumbs}
+        searchPlaceholder="Search jobs, workers, or type: job 42"
+        onSearch={handleGlobalSearch}
+        topBarActions={topBarActions}
         maxWidth="full"
       >
         <Routes>

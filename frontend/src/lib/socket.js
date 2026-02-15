@@ -18,6 +18,19 @@ const updateJobDetailStatus = (queryClient, payload) => {
         };
     });
 };
+const updateJobProgress = (queryClient, payload) => {
+    const key = payload.id.toString();
+    queryClient.setQueryData(["job", key], (data) => {
+        if (!data)
+            return data;
+        return {
+            ...data,
+            progress: payload.progress,
+            status: payload.progress >= 100 ? data.status : "processing",
+            uiStatus: payload.progress >= 100 ? data.uiStatus : "running"
+        };
+    });
+};
 const appendJobLog = (queryClient, payload) => {
     const jobKey = payload.id.toString();
     queryClient.setQueryData(["job", jobKey], (data) => {
@@ -60,6 +73,24 @@ export const initRealtime = (queryClient) => {
                 applyJobListPatch(queryClient);
                 if (message.type === "job.updated")
                     updateJobDetailStatus(queryClient, message.payload);
+                if (message.type === "job.completed") {
+                    const id = message.payload.id.toString();
+                    queryClient.setQueryData(["job", id], (data) => {
+                        if (!data)
+                            return data;
+                        return {
+                            ...data,
+                            progress: 100,
+                            summary: message.payload.summary ?? data.summary,
+                            tokenCount: message.payload.tokenCount ?? data.tokenCount,
+                            costCents: message.payload.costCents ?? data.costCents,
+                            uiStatus: "reviewed"
+                        };
+                    });
+                }
+                break;
+            case "job.progress":
+                updateJobProgress(queryClient, message.payload);
                 break;
             case "job.log":
                 appendJobLog(queryClient, message.payload);

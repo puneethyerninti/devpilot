@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   testDir: "tests",
+  testMatch: "**/*.pw.spec.ts",
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:4173",
     trace: "on-first-retry"

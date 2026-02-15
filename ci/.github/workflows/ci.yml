@@ -12,6 +12,41 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: devpilot
+          POSTGRES_PASSWORD: devpilot
+          POSTGRES_DB: devpilotdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devpilot -d devpilotdb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:6
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+      REDIS_URL: redis://localhost:6379
+      FRONTEND_URL: http://localhost:5173
+      JWT_SECRET: ${{ secrets['JWT_SECRET'] }}
+      GITHUB_APP_ID: ${{ secrets['GITHUB_APP_ID'] }}
+      GITHUB_PRIVATE_KEY: ${{ secrets['GITHUB_PRIVATE_KEY'] }}
+      GITHUB_WEBHOOK_SECRET: ${{ secrets['GITHUB_WEBHOOK_SECRET'] }}
+      GITHUB_CLIENT_ID: ${{ secrets['GITHUB_CLIENT_ID'] }}
+      GITHUB_CLIENT_SECRET: ${{ secrets['GITHUB_CLIENT_SECRET'] }}
+      OPENAI_API_KEY: ${{ secrets['OPENAI_API_KEY'] }}
+      AI_MODE: mock
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,24 +81,53 @@ jobs:
 
       - name: Integration stack
         run: |
-          docker compose up -d postgres redis
           pnpm --dir backend prisma migrate deploy
           pnpm --dir backend prisma db seed
-          pnpm --dir frontend exec playwright install --with-deps
-          pnpm --dir frontend exec playwright test
-        env:
-          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
-          REDIS_URL: redis://localhost:6379
-
-      - name: Teardown stack
-        if: always()
-        run: docker compose down -v
 
       - name: Deploy staging
         if: github.ref == 'refs/heads/main'
         run: |
           echo "Deploying to staging..."
           # TODO: integrate with your hosting provider (Render, Railway, Fly.io, etc.)
+
+  e2e-optional:
+    runs-on: ubuntu-latest
+    needs: build-test
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: devpilot
+          POSTGRES_PASSWORD: devpilot
+          POSTGRES_DB: devpilotdb
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:6
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
+      REDIS_URL: redis://localhost:6379
+      OPENAI_API_KEY: ${{ secrets['OPENAI_API_KEY'] }}
+      GITHUB_WEBHOOK_SECRET: ${{ secrets['GITHUB_WEBHOOK_SECRET'] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.2
+          run_install: true
+      - name: Run Playwright
+        if: ${{ env.OPENAI_API_KEY != '' && env.GITHUB_WEBHOOK_SECRET != '' }}
+        run: |
+          pnpm --dir frontend exec playwright install --with-deps
+          pnpm --dir frontend exec playwright test
 
   build-and-artifact:
     runs-on: ubuntu-latest
@@ -98,14 +162,9 @@ jobs:
           name: devpilot-backend-image
           path: backend-image.tar.gz
 
-      - name: Integration compose up
+      - name: Secret scan
         run: |
-          docker compose up -d postgres redis
-          pnpm --dir backend test -- --runInBand
-        env:
-          DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
-          REDIS_URL: redis://localhost:6379
-
-      - name: Teardown
-        if: always()
-        run: docker compose down -v
+          if git grep -n "BEGIN PRIVATE KEY" -- . ":!*.example" ":!.env.example"; then
+            echo "Potential private key material committed";
+            exit 1;
+          fi

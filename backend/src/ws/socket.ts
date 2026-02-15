@@ -8,11 +8,25 @@ import type { AppConfig } from "../config";
 import { registerDirectEmitter, initSocketPublisher } from "./publisher";
 import type { OutboundSocketMessage } from "../types/messages";
 import { logger } from "../utils/logger";
+import { verifySocketAuth } from "../middleware/socketAuth";
 
 export const createSocketServer = async (server: HttpServer, config: AppConfig) => {
+  const isAllowedOrigin = (origin?: string) => {
+    if (!origin) return true;
+    if (origin === config.frontendUrl) return true;
+    if (config.nodeEnv !== "production" && /^https?:\/\/localhost:\d+$/.test(origin)) return true;
+    return false;
+  };
+
   const io = new Server(server, {
     cors: {
-      origin: config.frontendUrl,
+      origin: (origin, callback) => {
+        if (isAllowedOrigin(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error(`Socket origin not allowed: ${origin ?? "unknown"}`));
+      },
       credentials: true
     }
   });
@@ -48,10 +62,19 @@ export const createSocketServer = async (server: HttpServer, config: AppConfig) 
     }
   });
 
+  io.use(verifySocketAuth(config));
+
   io.on("connection", (socket) => {
     logger.info("socket.connected", { id: socket.id });
     socket.on("subscribe", (room: string) => {
       socket.join(room);
+    });
+
+    socket.on("job:retry", (payload: { jobId: number }) => {
+      const role = socket.user?.role;
+      if (role !== "operator" && role !== "admin") {
+        socket.emit("event", { type: "job.failed", payload: { id: payload.jobId, error: "Forbidden" } });
+      }
     });
   });
 
