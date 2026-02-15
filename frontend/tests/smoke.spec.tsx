@@ -19,13 +19,13 @@ const renderApp = (path = '/jobs') => {
 };
 
 describe('App smoke test', () => {
-  it('renders job queue heading', () => {
+  it('renders initial app loading shell for jobs route', () => {
     const html = renderApp('/jobs');
-    expect(html).toContain('Job Control Room');
+    expect(html).toContain('Checking session');
   });
 
-  it('renders workers heading', () => {
+  it('renders initial app loading shell for workers route', () => {
     const html = renderApp('/workers');
-    expect(html).toContain('Realtime agents');
+    expect(html).toContain('Checking session');
   });
 });

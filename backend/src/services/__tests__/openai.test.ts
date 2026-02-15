@@ -13,6 +13,16 @@ jest.mock("../../prisma/client", () => {
 import { prisma } from "../../prisma/client";
 import { streamReview } from "../openai";
 
+const streamFromChunks = (chunks: string[]) => {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)));
+      controller.close();
+    }
+  });
+};
+
 const makeConfig = (partial?: Partial<AppConfig>): AppConfig => {
   return {
     ...partial,
@@ -29,9 +39,9 @@ const makeConfig = (partial?: Partial<AppConfig>): AppConfig => {
     githubPrivateKey: "key",
     sessionSecret: "secret",
     jwtIssuer: "devpilot",
-    aiMode: "mock",
-    enableOpenAi: false,
-    openAiKey: undefined,
+    aiMode: "live",
+    enableOpenAi: true,
+    openAiKey: "test-openai-key",
     aiModel: "gpt-4.1-mini",
     sentryDsn: undefined,
     socketRedisHost: "localhost",
@@ -42,10 +52,28 @@ const makeConfig = (partial?: Partial<AppConfig>): AppConfig => {
 };
 
 describe("services/openai streamReview", () => {
-  it("streams chunks in mock mode and records usage when jobId present", async () => {
-    const config = makeConfig({ aiMode: "mock" });
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("streams chunks in live mode and records usage when jobId present", async () => {
+    const config = makeConfig();
     const deltas: string[] = [];
     const progresses: number[] = [];
+
+    const ssePayload = [
+      'data: {"choices":[{"delta":{"content":"{\\"summary\\":\\"Strong PR overall\\",\\"findings\\":["}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"{\\"severity\\":\\"medium\\",\\"file\\":\\"src/app.ts\\",\\"line\\":12,\\"explanation\\":\\"Validate input\\"}]"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"}"}}]}\n\n',
+      "data: [DONE]\n\n"
+    ];
+
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(streamFromChunks(ssePayload), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" }
+      })
+    );
 
     const result = await streamReview(config, {
       prompt: "review this diff",
@@ -56,9 +84,9 @@ describe("services/openai streamReview", () => {
       }
     });
 
-    expect(deltas.join("")).toContain("mock");
+    expect(deltas.join(" ")).toContain("summary");
     expect(progresses.length).toBeGreaterThan(0);
-    expect(result.summary).toContain("Mock");
+    expect(result.summary).toContain("Strong PR overall");
     expect(result.findings.length).toBeGreaterThan(0);
 
     expect(prisma.aiUsage.create).toHaveBeenCalledTimes(1);
