@@ -11,6 +11,8 @@
   ],
   "scripts": {
     "dev": "pnpm run dev:all",
+    "preflight": "node scripts/preflight.cjs",
+    "dev:setup": "pnpm preflight && docker compose up -d postgres redis && pnpm prisma:setup",
     "dev:all": "concurrently \"pnpm --dir backend dev\" \"pnpm --dir frontend dev\" \"pnpm --dir worker dev\"",
     "lint": "pnpm --dir backend lint && pnpm --dir frontend lint",
     "test": "pnpm --dir backend test && pnpm --dir frontend test",

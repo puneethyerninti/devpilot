@@ -140,6 +140,7 @@ const AppContent = (): JSX.Element => {
   if (!me) {
     const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
     const loginUrl = new URL("/auth/github", apiBase).toString();
+    const callbackUrl = new URL("/auth/github/callback", apiBase).toString();
 
     return (
       <div className="min-h-screen bg-base text-text-primary flex items-center justify-center p-6">
@@ -170,7 +171,7 @@ const AppContent = (): JSX.Element => {
           <div className="rounded-lg border border-border p-4 space-y-2 bg-base/40">
             <p className="text-sm font-medium">Auth endpoint</p>
             <p className="text-xs text-text-secondary break-all">{loginUrl}</p>
-            <p className="text-xs text-text-secondary">If sign-in fails, confirm your GitHub OAuth callback URL is exactly <span className="text-text-primary">http://localhost:4001/auth/github/callback</span>.</p>
+            <p className="text-xs text-text-secondary">If sign-in fails, confirm your GitHub OAuth callback URL is exactly <span className="text-text-primary">{callbackUrl}</span>.</p>
           </div>
 
           <a

@@ -11,34 +11,46 @@ DevPilot Phase 3 delivers an end-to-end dashboard for monitoring AI pull-request
 - **Demo** (`/demo`): Legacy standalone webhook/worker sample retained for reference; production code lives under `/backend` and `/worker`.
 
 ## Quickstart
-1. **Clone & bootstrap**
+1. **Clone & install**
    ```bash
    pnpm install
-   cp backend/.env.example backend/.env
-   docker-compose up -d # deps only; add --profile app to run backend/worker/frontend containers
-   pnpm prisma:setup   # convenience script, see package.json
-   pnpm dev:all        # concurrently runs backend + frontend
    ```
-2. **First migration & seed**
+2. **Configure backend env**
    ```bash
-   cd backend
-   pnpm prisma migrate dev
-   pnpm prisma db seed
+   cp backend/.env.example backend/.env
    ```
-3. **Start services manually (optional)**
+3. **Run preflight checks (Phase 1)**
+   ```bash
+   pnpm preflight
+   ```
+4. **Start infrastructure services**
+   ```bash
+   docker compose up -d postgres redis
+   ```
+5. **Apply migrations and seed data**
+   ```bash
+   pnpm prisma:setup
+   ```
+6. **Run all services locally**
+   ```bash
+   pnpm dev:all
+   ```
+   This runs backend, frontend, and worker concurrently.
+
+7. **Start services manually (optional)**
    ```bash
    cd backend && pnpm dev
    cd frontend && pnpm dev
    cd worker && pnpm dev
    ```
 
-4. **Quick smoke (Windows PowerShell)**
+8. **Quick smoke (Windows PowerShell)**
    ```powershell
    $env:API_TOKEN="<signed_jwt_token>"
    ./scripts/smoke-phase1.ps1
    ```
 
-   **Quick smoke (bash)**
+9. **Quick smoke (bash)**
    ```bash
    API_TOKEN=<signed_jwt_token> ./scripts/smoke-phase1.sh
    ```
@@ -55,7 +67,7 @@ DevPilot Phase 3 delivers an end-to-end dashboard for monitoring AI pull-request
   - Callback: `http://localhost:4000/auth/github/callback`
   - Scopes: `read:user`, `user:email`, `repo` (optional for private repos)
   - Copy `Client ID/Secret` into `backend/.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
-- **Postgres & Redis**: `docker-compose up -d` provisions both. Expose externally only behind VPN/tunnel.
+- **Postgres & Redis**: `docker compose up -d postgres redis` provisions both. Expose externally only behind VPN/tunnel.
 - **JWT secret**: Generate a long random string (`openssl rand -hex 32`) for `SESSION_SECRET`.
 - **Sentry**: Optional `SENTRY_DSN`; backend/worker auto-initialize when present.
 - **OpenAI**: set `OPENAI_API_KEY` and keep `AI_MODE=live`.
@@ -71,7 +83,10 @@ GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 GITHUB_WEBHOOK_SECRET=
 GITHUB_APP_ID=
+GITHUB_PRIVATE_KEY_FILE=
+GITHUB_PRIVATE_KEY_BASE64=
 GITHUB_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+JWT_SECRET=
 SESSION_SECRET=
 JWT_ISSUER=devpilot
 OPENAI_API_KEY=
@@ -85,7 +100,7 @@ AI_MODEL=gpt-4.1-mini
 
 ### Webhook consolidation - how to run locally
 1. Set `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`, and `GITHUB_PRIVATE_KEY` in `backend/.env` (private key must preserve `\n`).
-2. Run deps: `docker-compose up -d postgres redis` (or use your own Postgres/Redis).
+2. Run deps: `docker compose up -d postgres redis` (or use your own Postgres/Redis).
 3. Apply migrations: `cd backend && pnpm prisma migrate dev` (or `--create-only` if offline) and `pnpm prisma generate`.
 4. Start backend + worker: `pnpm --filter @devpilot/backend dev` and `pnpm --filter @devpilot/worker dev`.
 5. Send a signed webhook: POST to `http://localhost:4000/api/webhooks/github` with `X-GitHub-Delivery`, `X-GitHub-Event: pull_request`, `X-Hub-Signature-256`, and a PR payload. Successful runs enqueue a job and emit Socket.IO events.
@@ -144,8 +159,10 @@ Messages shape: `{ type: string; payload: unknown }`.
 The frontend subscribes globally for list updates and per-job channels (`job:{id}`) for streaming logs.
 
 ## Project Scripts (`package.json` root)
-- `pnpm dev:all` – backend + frontend via `concurrently`
-- `pnpm prisma:setup` – install Prisma deps and apply migrations
+- `pnpm preflight` – validates local prerequisites (Node/pnpm/env/docker)
+- `pnpm dev:setup` – runs preflight, starts Postgres/Redis, applies migrations + seed
+- `pnpm dev:all` – backend + frontend + worker via `concurrently`
+- `pnpm prisma:setup` – apply migrations + seed backend DB
 - `pnpm lint`, `pnpm test`, `pnpm build` – delegate to packages
 
 ## CI/CD
