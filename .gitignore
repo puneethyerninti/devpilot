@@ -11,6 +11,8 @@ dist/
 coverage/
 backend/coverage/
 frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
 
 # Local databases
 mongo-data/
