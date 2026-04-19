@@ -4,9 +4,14 @@ param(
   [int]$PrNumber = 1,
   [string]$HeadSha = "HEAD_SHA",
   [int]$InstallationId = 0,
-  [string]$Sender = "smoke-user",
-  [string]$Url = "http://localhost:4000/api/webhooks/github"
+  [string]$ActorLogin = "smoke-user",
+  [string]$Url = ""
 )
+
+if (-not $Url) {
+  $baseUrl = if ($env:API_URL) { $env:API_URL } elseif ($env:DEVPILOT_API_URL) { $env:DEVPILOT_API_URL } else { "http://localhost:4000" }
+  $Url = "$baseUrl/api/webhooks/github"
+}
 
 if (-not $Secret) {
   Write-Error "Set GITHUB_WEBHOOK_SECRET or pass -Secret"
@@ -26,7 +31,7 @@ $payloadObj = @{
   pull_request = @{ number = $PrNumber; head = @{ sha = $HeadSha } }
   repository   = @{ id = 1; full_name = $RepoFullName; name = $parts[1]; owner = @{ login = $parts[0] } }
   installation = @{ id = $InstallationId }
-  sender       = @{ login = $Sender }
+  sender       = @{ login = $ActorLogin }
 }
 
 $payload = $payloadObj | ConvertTo-Json -Depth 6

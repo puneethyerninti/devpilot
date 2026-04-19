@@ -43,7 +43,7 @@ describe("webhooks route", () => {
     githubClientSecret: "",
     sessionSecret: "session",
     jwtIssuer: "devpilot",
-    aiMode: "mock",
+    aiMode: "live",
     enableOpenAi: false,
     openAiKey: undefined,
     aiModel: "gpt-4.1-mini",

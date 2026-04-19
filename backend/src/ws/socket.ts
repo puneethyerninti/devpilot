@@ -33,6 +33,12 @@ export const createSocketServer = async (server: HttpServer, config: AppConfig) 
 
   const pubClient = createClient({ url: config.redisUrl });
   const subClient = pubClient.duplicate();
+  pubClient.on("error", (err) => {
+    logger.warn("redis.socket_pub_error", { error: err.message });
+  });
+  subClient.on("error", (err) => {
+    logger.warn("redis.socket_sub_error", { error: err.message });
+  });
   await pubClient.connect();
   await subClient.connect();
   io.adapter(createAdapter(pubClient, subClient));
@@ -48,6 +54,9 @@ export const createSocketServer = async (server: HttpServer, config: AppConfig) 
   initSocketPublisher(config);
 
   const subscriber = new IORedis(config.redisUrl);
+  subscriber.on("error", (err) => {
+    logger.warn("redis.socket_events_error", { error: err.message });
+  });
   await subscriber.subscribe("socket-events");
   subscriber.on("message", (_channel, payload) => {
     try {

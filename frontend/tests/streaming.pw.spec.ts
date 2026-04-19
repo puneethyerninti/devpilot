@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("jobs page renders running status and progress in mock mode", async ({ page }) => {
+test("jobs page renders running status and progress", async ({ page }) => {
   await page.route("**/api/jobs**", async (route) => {
     await route.fulfill({
       status: 200,

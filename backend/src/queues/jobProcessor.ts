@@ -131,6 +131,7 @@ type PullRequestData = {
   hunks: ParsedHunk[];
   commits?: number;
   totalPatchBytes: number;
+  installationIdUsed: number;
 };
 
 const fetchPullRequestData = async (
@@ -139,32 +140,64 @@ const fetchPullRequestData = async (
   prNumber: number,
   installationId: number | null | undefined,
   config: AppConfig,
-  jobId: number,
-  forceLive: boolean
+  jobId: number
 ): Promise<PullRequestData> => {
-  if (!installationId && !forceLive) {
-    await logJobLine(jobId, "github.fetch_pr.skipped (no installation)");
-    return { files: [], hunks: [], commits: 0, totalPatchBytes: 0 };
-  }
-
-  if (!installationId && forceLive) {
+  if (!installationId) {
     throw new Error("Missing installation id for live mode");
   }
 
-  const octokit = installationId
-    ? await (async () => {
-        const { getInstallationClient } = await import("../github/githubAppClient.js");
-        return getInstallationClient(config, installationId);
-      })()
-    : null;
+  const { getInstallationClient, getRepositoryInstallationId } = await import("../github/githubAppClient.js");
+
+  let effectiveInstallationId = installationId;
+  let octokit = null as Awaited<ReturnType<typeof getInstallationClient>> | null;
+  try {
+    octokit = await getInstallationClient(config, effectiveInstallationId);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode;
+    const canRetryWithLookup = status === 401 || status === 403 || status === 404;
+
+    if (!canRetryWithLookup) {
+      throw err;
+    }
+
+    await logJobLine(
+      jobId,
+      `github.installation.invalid provided=${effectiveInstallationId} status=${status ?? "unknown"}; attempting repository lookup`
+    );
+
+    const discoveredInstallationId = await getRepositoryInstallationId(config, owner, repo);
+    if (!discoveredInstallationId) {
+      throw err;
+    }
+
+    effectiveInstallationId = discoveredInstallationId;
+    octokit = await getInstallationClient(config, effectiveInstallationId);
+
+    await prisma.pRJob.update({ where: { id: jobId }, data: { installationId: effectiveInstallationId } }).catch(() => undefined);
+    await logJobLine(jobId, `github.installation.resolved installationId=${effectiveInstallationId}`);
+    await prisma.actionLog.create({
+      data: {
+        jobId,
+        kind: "github.installation.resolved",
+        message: "Resolved installation id from repository",
+        metadata: { owner, repo, installationId: effectiveInstallationId }
+      }
+    });
+  }
+
   if (!octokit) {
     throw new Error("Missing GitHub installation client");
   }
 
   await logJobLine(jobId, "live.mode.enabled");
-  logger.info("github.installation_token.created", { jobId, installationId });
+  logger.info("github.installation_token.created", { jobId, installationId: effectiveInstallationId });
   await prisma.actionLog.create({
-    data: { jobId, kind: "github.installation_token.created", message: "Installation token created", metadata: { installationId } }
+    data: {
+      jobId,
+      kind: "github.installation_token.created",
+      message: "Installation token created",
+      metadata: { installationId: effectiveInstallationId }
+    }
   });
 
   try {
@@ -196,7 +229,7 @@ const fetchPullRequestData = async (
       }
     });
 
-    return { files, hunks, commits, totalPatchBytes };
+    return { files, hunks, commits, totalPatchBytes, installationIdUsed: effectiveInstallationId };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const status = (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode;
@@ -227,6 +260,9 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 });
+  connection.on("error", (err) => {
+    logger.warn("redis.worker_connection_error", { workerId, error: err.message });
+  });
 
   const dlq = new Queue<JobPayload>("pr_dlq", { connection });
 
@@ -282,11 +318,11 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
       const owner = job.data.repoOwner ?? job.data.repo.split("/")[0];
       const repoName = job.data.repoName ?? job.data.repo.split("/")[1];
 
-      const liveRequired = Boolean(job.data.forceLive || job.data.installationId);
       let pullData: PullRequestData | null = null;
       let chunkedHunks: Array<{ file: string; startLine: number; endLine: number; hunk: string }> = [];
       try {
-        pullData = await fetchPullRequestData(owner, repoName, job.data.prNumber, job.data.installationId, config, dbJobId, liveRequired);
+        pullData = await fetchPullRequestData(owner, repoName, job.data.prNumber, job.data.installationId, config, dbJobId);
+        job.data.installationId = pullData.installationIdUsed;
         chunkedHunks = chunkHunks(pullData.hunks);
         await logJobLine(dbJobId, `Fetched ${pullData.hunks.length} hunks (${chunkedHunks.length} chunks)`);
       } catch (err) {
@@ -318,7 +354,7 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
           },
           logLine: async (line) => logJobLine(dbJobId, line)
         },
-        { forceLive: liveRequired }
+        { forceLive: true }
       );
 
       const inlineSuggestions = findingsToInlineSuggestions(result.findings);

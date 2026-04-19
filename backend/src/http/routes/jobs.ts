@@ -9,6 +9,7 @@ import type { Queue } from "bullmq";
 import type { JobPayload } from "../../queues/jobProcessor";
 import { enqueuePullRequestJob } from "../../queues";
 import type { $Enums } from "@prisma/client";
+import type { AppConfig } from "../../config";
 type JobStatus = $Enums.JobStatus;
 
 const progressFor = (status: JobStatus) => {
@@ -17,12 +18,13 @@ const progressFor = (status: JobStatus) => {
   return 0;
 };
 
-const runJobSchema = z.object({
-  repo: z.string(),
-  prNumber: z.coerce.number(),
-  headSha: z.string().min(6),
-  installationId: z.coerce.number().int().positive().optional()
-});
+const runJobSchema = z
+  .object({
+    repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "repo must be in owner/repo format"),
+    prNumber: z.coerce.number().int().positive(),
+    headSha: z.string().min(6),
+    installationId: z.coerce.number().int().positive().optional()
+  });
 
 const idSchema = z.object({ id: z.coerce.number().int().positive() });
 
@@ -40,7 +42,7 @@ const toUiStatus = (job: {
   return job.status;
 };
 
-export const createJobRouter = (queue: Queue<JobPayload>) => {
+export const createJobRouter = (queue: Queue<JobPayload>, config?: AppConfig) => {
   const router = Router();
 
   router.get(
@@ -71,6 +73,8 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
           id: job.id,
           repoFullName: repo.fullName,
           prNumber: job.prNumber,
+          headSha: job.headSha,
+          installationId: job.installationId ?? undefined,
           status: job.status,
           uiStatus: toUiStatus(job),
           summary: job.summary ?? undefined,
@@ -207,19 +211,53 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
 
   router.post(
     "/run",
-    requireRole("admin"),
+    requireRole("operator"),
     asyncHandler(async (req, res) => {
       const parsed = runJobSchema.safeParse(req.body);
       if (!parsed.success) {
         return sendError(res, parsed.error.message, 400);
       }
       const payload = parsed.data;
+
+      let resolvedInstallationId = payload.installationId;
+      if (!resolvedInstallationId) {
+        const [repoOwner, repoName] = payload.repo.split("/");
+
+        if (config) {
+          try {
+            const { getRepositoryInstallationId } = await import("../../github/githubAppClient.js");
+            resolvedInstallationId = await getRepositoryInstallationId(config, repoOwner, repoName) ?? undefined;
+          } catch {
+            // Fallback below handles local discovery from previous jobs.
+          }
+        }
+
+        const recentJobWithInstallation = await prisma.pRJob.findFirst({
+          where: {
+            repoOwner,
+            repoName,
+            installationId: { not: null }
+          },
+          orderBy: { updatedAt: "desc" },
+          select: { installationId: true }
+        });
+        resolvedInstallationId = resolvedInstallationId ?? recentJobWithInstallation?.installationId ?? undefined;
+      }
+
+      if (!resolvedInstallationId) {
+        return sendError(
+          res,
+          "No GitHub installation found for this repository. Ensure the GitHub App is installed on the repo, or provide installationId.",
+          400
+        );
+      }
+
       const job = await enqueuePullRequestJob(queue, {
         repo: payload.repo,
         prNumber: payload.prNumber,
         headSha: payload.headSha,
         triggeredBy: req.user!.login,
-        installationId: payload.installationId,
+        installationId: resolvedInstallationId,
         forceLive: true
       });
       sendOk(res, { jobId: job.id }, 202);

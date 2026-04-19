@@ -37,6 +37,9 @@ const ensureRepoRecord = async (fullName: string) => {
 
 export const createJobQueue = (config: AppConfig) => {
   const connection = new IORedis(config.redisUrl);
+  connection.on("error", (err) => {
+    logger.warn("redis.queue_connection_error", { error: err.message });
+  });
   return new Queue<JobPayload>(config.queueName, { connection });
 };
 
@@ -100,13 +103,47 @@ export const enqueuePullRequestJob = async (queue: Queue<JobPayload>, input: Enq
     meta
   };
 
-  const jobRecord = uniqueWhere
-    ? await prisma.pRJob.upsert({
+  let jobRecord;
+  if (uniqueWhere) {
+    try {
+      jobRecord = await prisma.pRJob.upsert({
         where: uniqueWhere,
         update: baseJobData,
         create: baseJobData
-      })
-    : await prisma.pRJob.create({ data: baseJobData });
+      });
+    } catch (err) {
+      const isUniqueConflict = err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
+      if (!isUniqueConflict || !hasInstallationId) {
+        throw err;
+      }
+
+      const existingByComposite = await prisma.pRJob.findUnique({
+        where: {
+          installationId_repoOwner_repoName_prNumber_headSha: {
+            installationId: input.installationId!,
+            repoOwner: repoRecord.owner,
+            repoName: repoRecord.name,
+            prNumber: input.prNumber,
+            headSha: input.headSha
+          }
+        }
+      });
+
+      if (!existingByComposite) {
+        throw err;
+      }
+
+      jobRecord = await prisma.pRJob.update({
+        where: { id: existingByComposite.id },
+        data: {
+          ...baseJobData,
+          deliveryId: existingByComposite.deliveryId ?? input.deliveryId ?? null
+        }
+      });
+    }
+  } else {
+    jobRecord = await prisma.pRJob.create({ data: baseJobData });
+  }
 
   queueJobId = `prjob-${jobRecord.id}`;
   if (jobRecord.jobId !== queueJobId) {
@@ -115,6 +152,8 @@ export const enqueuePullRequestJob = async (queue: Queue<JobPayload>, input: Enq
   }
 
   await prisma.pRFile.deleteMany({ where: { jobId: jobRecord.id } });
+
+  const queueRunId = input.deliveryId ? `${queueJobId}-${input.deliveryId}` : queueJobId;
 
   await queue.add(
     "pr-analysis",
@@ -133,7 +172,7 @@ export const enqueuePullRequestJob = async (queue: Queue<JobPayload>, input: Enq
     {
       removeOnComplete: true,
       removeOnFail: false,
-      jobId: queueJobId,
+      jobId: queueRunId,
       attempts: 3,
       backoff: { type: "exponential", delay: 2000 }
     }
@@ -144,7 +183,7 @@ export const enqueuePullRequestJob = async (queue: Queue<JobPayload>, input: Enq
       jobId: jobRecord.id,
       kind: "job.created",
       message: `Queued PR ${repoRecord.owner}/${repoRecord.name}#${input.prNumber} (${input.headSha.slice(0, 7)})`,
-      metadata: { deliveryId: input.deliveryId ?? null, queueJobId }
+      metadata: { deliveryId: input.deliveryId ?? null, queueJobId: queueRunId }
     }
   });
 
@@ -153,7 +192,7 @@ export const enqueuePullRequestJob = async (queue: Queue<JobPayload>, input: Enq
       jobId: jobRecord.id,
       kind: "job.enqueued",
       message: "Job enqueued for processing",
-      metadata: { queue: queue.name, queueJobId }
+      metadata: { queue: queue.name, queueJobId: queueRunId }
     }
   });
 

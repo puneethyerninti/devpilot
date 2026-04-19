@@ -1,5 +1,5 @@
 param(
-  [string]$ApiUrl = "http://localhost:4000",
+  [string]$ApiUrl = $(if ($env:API_URL) { $env:API_URL } elseif ($env:DEVPILOT_API_URL) { $env:DEVPILOT_API_URL } else { "http://localhost:4000" }),
   [string]$ApiToken = $env:API_TOKEN
 )
 

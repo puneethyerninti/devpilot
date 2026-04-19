@@ -12,44 +12,98 @@ import Tabs from '../components/ui/Tabs';
 import SearchBar from '../components/ui/SearchBar';
 import ProgressBar from '../components/ui/ProgressBar';
 import AnimatedCounter from '../components/ui/AnimatedCounter';
-import { useJobsQuery, useMeQuery, useRunJob } from '../lib/api';
+import Input from '../components/ui/Input';
+import Modal from '../components/ui/Modal';
+import { useJobsQuery, useMeQuery, useReposQuery, useRunJob } from '../lib/api';
+import axios from 'axios';
 
 const JobsPage = (): JSX.Element => {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<'all' | 'queued' | 'processing' | 'done' | 'failed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isCreateModalOpen, setCreateModalOpen] = useState(false);
+  const [repoMode, setRepoMode] = useState<'connected' | 'custom'>('connected');
+  const [selectedRepoId, setSelectedRepoId] = useState('');
+  const [repoInput, setRepoInput] = useState('');
+  const [prNumberInput, setPrNumberInput] = useState('');
+  const [headShaInput, setHeadShaInput] = useState('');
+  const [installationIdInput, setInstallationIdInput] = useState('');
+  const [createJobError, setCreateJobError] = useState<string | null>(null);
   const { data: jobs, isLoading, isError, refetch } = useJobsQuery({ status: filter === 'all' ? undefined : filter });
   const { data: me } = useMeQuery();
+  const { data: repos = [], isLoading: isReposLoading } = useReposQuery();
   const { mutate: runJob, isPending: isCreatingJob } = useRunJob();
 
-  const openCreateJobPrompt = () => {
-    const repo = window.prompt('Repository (owner/repo)');
-    if (!repo) return;
-    const prNumberRaw = window.prompt('Pull request number');
-    if (!prNumberRaw) return;
-    const headSha = window.prompt('Head SHA (commit hash)');
-    if (!headSha) return;
-    const installationIdRaw = window.prompt('GitHub installation ID (required for live review)');
-    if (!installationIdRaw) return;
+  const resetCreateForm = () => {
+    const initialRepo = repos[0];
+    setRepoMode(initialRepo ? 'connected' : 'custom');
+    setSelectedRepoId(initialRepo ? String(initialRepo.id) : '');
+    setRepoInput(initialRepo?.fullName ?? '');
+    setPrNumberInput(initialRepo?.lastPrNumber ? String(initialRepo.lastPrNumber) : '');
+    setHeadShaInput(initialRepo?.lastHeadSha ?? '');
+    setInstallationIdInput(initialRepo?.lastInstallationId ? String(initialRepo.lastInstallationId) : '');
+    setCreateJobError(null);
+  };
 
-    const prNumber = Number(prNumberRaw);
-    const installationId = Number(installationIdRaw);
+  const openCreateJobModal = () => {
+    resetCreateForm();
+    setCreateModalOpen(true);
+  };
+
+  const closeCreateJobModal = () => {
+    setCreateModalOpen(false);
+    setCreateJobError(null);
+  };
+
+  const submitCreateJob = () => {
+    const repo = repoInput.trim();
+    const headSha = headShaInput.trim();
+    const prNumber = Number(prNumberInput);
+    const rawInstallationId = installationIdInput.trim();
+    const installationId = rawInstallationId ? Number(rawInstallationId) : undefined;
+
+    if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+      setCreateJobError('Repository must be in owner/repo format.');
+      return;
+    }
 
     if (!Number.isInteger(prNumber) || prNumber <= 0) {
-      window.alert('Invalid pull request number.');
+      setCreateJobError('Pull request number must be a positive integer.');
       return;
     }
 
-    if (!Number.isInteger(installationId) || installationId <= 0) {
-      window.alert('Invalid installation ID.');
+    if (headSha.length < 6) {
+      setCreateJobError('Head SHA must be at least 6 characters.');
       return;
     }
+
+    if (
+      rawInstallationId &&
+      (typeof installationId !== 'number' || !Number.isInteger(installationId) || installationId <= 0)
+    ) {
+      setCreateJobError('Installation ID must be a positive integer when provided.');
+      return;
+    }
+
+    setCreateJobError(null);
 
     runJob(
-      { repo, prNumber, headSha, installationId },
       {
-        onError: () => {
-          window.alert('Failed to create job. Check your role and payload values.');
+        repo,
+        prNumber,
+        headSha,
+        installationId
+      },
+      {
+        onSuccess: () => {
+          closeCreateJobModal();
+        },
+        onError: (error) => {
+          if (axios.isAxiosError<{ error?: string }>(error)) {
+            setCreateJobError(error.response?.data?.error ?? 'Failed to create job.');
+            return;
+          }
+          setCreateJobError('Failed to create job.');
         }
       }
     );
@@ -122,6 +176,10 @@ const JobsPage = (): JSX.Element => {
   ];
 
   const completionRate = stats.total > 0 ? (stats.done / stats.total) * 100 : 0;
+  const selectedRepo = useMemo(
+    () => repos.find((repo) => String(repo.id) === selectedRepoId),
+    [repos, selectedRepoId]
+  );
 
   return (
     <div className="space-y-6">
@@ -135,8 +193,8 @@ const JobsPage = (): JSX.Element => {
           variant="primary"
           size="md"
           className="glass-strong shadow-lg hover:shadow-xl"
-          onClick={openCreateJobPrompt}
-          disabled={me?.role !== 'admin' || isCreatingJob}
+          onClick={openCreateJobModal}
+          disabled={!me || (me.role !== 'admin' && me.role !== 'operator') || isCreatingJob}
         >
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -290,7 +348,7 @@ const JobsPage = (): JSX.Element => {
                 title="No jobs found"
                 description={searchQuery ? "No jobs match your search query." : filter === 'all' ? "No jobs have been created yet." : `No jobs with status "${filter}".`}
                 actionLabel="Create First Job"
-                onAction={openCreateJobPrompt}
+                onAction={openCreateJobModal}
               />
             ) : (
               <div className="space-y-3">
@@ -346,6 +404,133 @@ const JobsPage = (): JSX.Element => {
           </Card>
         )}
       </Tabs>
+
+      <Modal
+        isOpen={isCreateModalOpen}
+        onClose={closeCreateJobModal}
+        title="Create PR Review Job"
+        subtitle="Create a live GitHub PR review job."
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-3">
+            <Button variant="ghost" onClick={closeCreateJobModal} disabled={isCreatingJob}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitCreateJob} loading={isCreatingJob}>
+              Create Job
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {repos.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-text-primary">Repository source</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant={repoMode === 'connected' ? 'primary' : 'secondary'}
+                  onClick={() => {
+                    setRepoMode('connected');
+                    if (repos[0]) {
+                      setSelectedRepoId(String(repos[0].id));
+                      setRepoInput(repos[0].fullName);
+                    }
+                  }}
+                  disabled={isCreatingJob}
+                >
+                  Connected Repo
+                </Button>
+                <Button
+                  variant={repoMode === 'custom' ? 'primary' : 'secondary'}
+                  onClick={() => {
+                    setRepoMode('custom');
+                    setSelectedRepoId('');
+                    setRepoInput('');
+                  }}
+                  disabled={isCreatingJob}
+                >
+                  Custom Repo
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {repoMode === 'connected' && repos.length > 0 ? (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-text-primary" htmlFor="repo-select">Repository</label>
+              <select
+                id="repo-select"
+                className="w-full rounded-lg border border-border bg-elevated px-3 py-2 text-sm text-text-primary outline-none focus:border-primary"
+                value={selectedRepoId}
+                onChange={(event) => {
+                  const nextRepo = repos.find((repo) => String(repo.id) === event.target.value);
+                  setSelectedRepoId(event.target.value);
+                  if (!nextRepo) return;
+                  setRepoInput(nextRepo.fullName);
+                  setPrNumberInput(nextRepo.lastPrNumber ? String(nextRepo.lastPrNumber) : '');
+                  setHeadShaInput(nextRepo.lastHeadSha ?? '');
+                  setInstallationIdInput(nextRepo.lastInstallationId ? String(nextRepo.lastInstallationId) : '');
+                }}
+                disabled={isCreatingJob || isReposLoading}
+              >
+                {repos.map((repo) => (
+                  <option key={repo.id} value={repo.id}>{repo.fullName}</option>
+                ))}
+              </select>
+              {selectedRepo && (
+                <p className="text-xs text-text-secondary">
+                  Default branch: <span className="text-text-primary">{selectedRepo.defaultBranch}</span>
+                  {selectedRepo.lastSeenAt ? ` • Last activity: ${new Date(selectedRepo.lastSeenAt).toLocaleString()}` : ''}
+                </p>
+              )}
+            </div>
+          ) : (
+            <Input
+              label="Repository (owner/repo)"
+              placeholder="puneethyerninti/devpilot"
+              value={repoInput}
+              onChange={(event) => setRepoInput(event.target.value)}
+              disabled={isCreatingJob}
+              fullWidth
+            />
+          )}
+
+          <Input
+            label="Pull request number"
+            type="number"
+            min={1}
+            placeholder="1"
+            value={prNumberInput}
+            onChange={(event) => setPrNumberInput(event.target.value)}
+            disabled={isCreatingJob}
+            fullWidth
+          />
+
+          <Input
+            label="Head SHA (commit hash)"
+            placeholder="a1b2c3d"
+            value={headShaInput}
+            onChange={(event) => setHeadShaInput(event.target.value)}
+            helperText="Use the PR head commit SHA (min 6 chars)."
+            disabled={isCreatingJob}
+            fullWidth
+          />
+
+          <Input
+            label="GitHub installation ID (optional)"
+            placeholder="12345678"
+            value={installationIdInput}
+            onChange={(event) => setInstallationIdInput(event.target.value)}
+            helperText="If empty, backend uses the latest known installation for this repository."
+            disabled={isCreatingJob}
+            fullWidth
+          />
+
+          {createJobError && (
+            <p className="text-sm text-danger">{createJobError}</p>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 };

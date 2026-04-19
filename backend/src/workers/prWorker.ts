@@ -18,7 +18,11 @@ if (config.sentryDsn) {
 }
 
 const worker = registerJobWorker(config, workerId);
-const queue = new Queue<JobPayload>(config.queueName, { connection: new IORedis(config.redisUrl) });
+const queueConnection = new IORedis(config.redisUrl);
+queueConnection.on("error", (err) => {
+  logger.warn("redis.worker_status_queue_error", { workerId, error: err.message });
+});
+const queue = new Queue<JobPayload>(config.queueName, { connection: queueConnection });
 
 const recordStatus = async (status: "online" | "offline") => {
   let queueDepth = 0;

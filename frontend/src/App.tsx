@@ -99,13 +99,13 @@ const AppContent = (): JSX.Element => {
           {me.role.toUpperCase()}
         </Badge>
       )}
-      <div className="flex items-center gap-2 rounded-lg glass px-2.5 py-1.5">
+      <div className="flex items-center gap-2 rounded-lg glass px-2 py-1.5 max-w-[10.5rem] lg:max-w-[12rem]">
         <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-primary-400 to-primary-600 text-[11px] font-semibold text-white">
           {initials}
         </span>
-        <div className="leading-tight">
-          <p className="text-xs font-semibold text-text-primary">{me.login}</p>
-          <p className="text-[10px] text-text-secondary">Account</p>
+        <div className="leading-tight min-w-0">
+          <p className="truncate text-xs font-semibold text-text-primary">{me.login}</p>
+          <p className="hidden text-[10px] text-text-secondary xl:block">Account</p>
         </div>
       </div>
     </>
@@ -121,10 +121,6 @@ const AppContent = (): JSX.Element => {
       <div className="flex items-center justify-between text-text-secondary">
         <span>Role</span>
         <span className="text-text-primary uppercase">{me.role}</span>
-      </div>
-      <div className="flex items-center justify-between text-text-secondary">
-        <span>Endpoint</span>
-        <span className="text-text-primary">{(import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/^https?:\/\//, "")}</span>
       </div>
     </div>
   ) : null;

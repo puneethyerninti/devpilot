@@ -16,7 +16,7 @@ const configSchema = z.object({
   githubPrivateKey: z.string().optional(),
   sessionSecret: z.string(),
   jwtIssuer: z.string().default("devpilot"),
-  aiMode: z.enum(["live", "mock"]).default("live"),
+  aiMode: z.enum(["live"]).default("live"),
   enableOpenAi: z.coerce.boolean().default(true),
   openAiKey: z.string().optional(),
   aiModel: z.string().default("gpt-4.1-mini"),

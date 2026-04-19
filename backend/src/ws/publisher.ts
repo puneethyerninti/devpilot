@@ -2,6 +2,7 @@
 import IORedis from "ioredis";
 import type { AppConfig } from "../config";
 import type { OutboundSocketMessage } from "../types/messages";
+import { logger } from "../utils/logger";
 
 type Envelope = {
   message: OutboundSocketMessage;
@@ -16,6 +17,9 @@ let directEmitter: DirectEmitter | null = null;
 export const initSocketPublisher = (config: AppConfig) => {
   if (publisherClient) return publisherClient;
   publisherClient = new IORedis(config.redisUrl);
+  publisherClient.on("error", (err) => {
+    logger.warn("redis.socket_publisher_error", { error: err.message });
+  });
   return publisherClient;
 };
 

@@ -24,7 +24,7 @@ const Shell = ({ children, title, actions }: ShellProps): JSX.Element => {
   }, [location.pathname, title]);
 
   return (
-    <div className="min-h-screen bg-surface text-foreground">
+    <div className="min-h-screen bg-surface text-foreground overflow-x-hidden">
       <div className="flex">
         <aside className="hidden md:flex h-screen w-60 flex-col border-r border-border/50 bg-panel/70 backdrop-blur-xl sticky top-0" role="navigation" aria-label="Primary">
           <div className="relative flex items-center gap-3 px-5 py-5 border-b border-border/50 overflow-hidden">
@@ -80,9 +80,9 @@ const Shell = ({ children, title, actions }: ShellProps): JSX.Element => {
           </div>
         </aside>
 
-        <main className="flex-1">
+        <main className="flex-1 min-w-0">
           <header className="sticky top-0 z-10 border-b border-border/50 bg-panel/80 backdrop-blur-xl supports-[backdrop-filter]:bg-panel/70 shadow-sm">
-            <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3.5">
+            <div className="flex items-center gap-4 px-6 py-3.5 w-full">
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-medium">DevPilot Phase 3</p>
                 <h1 className="text-lg font-bold leading-tight text-foreground truncate">{derivedTitle}</h1>
@@ -116,7 +116,7 @@ const Shell = ({ children, title, actions }: ShellProps): JSX.Element => {
             </div>
           </header>
 
-          <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">{actions}{children}</div>
+          <div className="w-full px-6 py-6 space-y-6">{actions}{children}</div>
         </main>
       </div>
     </div>

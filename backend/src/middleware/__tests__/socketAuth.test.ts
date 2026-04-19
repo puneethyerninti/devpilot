@@ -16,7 +16,7 @@ const baseConfig: AppConfig = {
   githubPrivateKey: "key",
   sessionSecret: "secret",
   jwtIssuer: "devpilot",
-  aiMode: "mock",
+  aiMode: "live",
   enableOpenAi: true,
   openAiKey: undefined,
   aiModel: "gpt-4.1-mini",

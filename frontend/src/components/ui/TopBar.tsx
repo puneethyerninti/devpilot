@@ -43,30 +43,30 @@ const TopBar = ({ breadcrumbs, searchPlaceholder = 'Search...', onSearch, action
   return (
     <header
       className={cn(
-        'fixed top-0 left-0 md:left-60 right-0 z-30',
+        'fixed top-0 left-0 right-0 z-30',
         'glass-strong relative',
         'transition-all duration-300 ease-in-out',
         isVisible ? 'translate-y-0' : '-translate-y-full',
-        isScrolled 
-          ? 'shadow-2xl shadow-primary-500/5' 
-          : 'shadow-sm',
+        isScrolled ? 'shadow-2xl shadow-primary-500/5' : 'shadow-sm',
         className
       )}
     >
       {/* Animated gradient background */}
       <div className="absolute inset-0 bg-gradient-to-r from-primary-500/5 via-purple-500/5 to-primary-500/5 opacity-0 transition-opacity duration-500 group-hover:opacity-100 pointer-events-none" aria-hidden="true" />
       
-      <div className="relative mx-auto flex max-w-7xl items-center gap-4 px-6 py-3.5">
+      {/* content wrapper: shift inner content right on md+ to sit after the sidebar (15rem) */}
+      <div className="w-full">
+        <div className="flex items-center gap-2 pl-6 pr-6 py-3 md:pl-[15rem] md:pr-6 md:gap-3">
         {/* Breadcrumbs */}
         {breadcrumbs && (
-          <div className="flex-1 min-w-0 animate-slideInRight">
-            <div className="flex items-center gap-2 text-sm text-text-secondary font-medium">{breadcrumbs}</div>
+          <div className="min-w-0 shrink grow animate-slideInRight">
+            <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-text-secondary">{breadcrumbs}</div>
           </div>
         )}
 
         {/* Search Bar with premium styling */}
         {onSearch && (
-          <div className="hidden sm:flex items-center gap-2 flex-1 max-w-md animate-fadeIn">
+          <div className="flex min-w-0 flex-1 items-center gap-2 animate-fadeIn">
             <div className="group relative w-full">
               {/* Hover glow effect */}
               <div
@@ -94,7 +94,7 @@ const TopBar = ({ breadcrumbs, searchPlaceholder = 'Search...', onSearch, action
                 }}
                 className={cn(
                   'relative w-full rounded-lg glass border border-transparent',
-                  'pl-9 pr-3 py-2 text-sm text-text-primary font-medium',
+                  'pl-9 pr-2 py-2 text-sm text-text-primary font-medium',
                   'placeholder:text-text-tertiary/50',
                   'outline-none transition-all duration-300',
                   'focus:border-primary/50 focus:glass-strong focus:ring-2 focus:ring-primary/20 focus:shadow-lg focus:shadow-primary-500/10',
@@ -104,7 +104,7 @@ const TopBar = ({ breadcrumbs, searchPlaceholder = 'Search...', onSearch, action
               />
               
               {/* Keyboard shortcut hint */}
-              <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+              <div className="pointer-events-none absolute inset-y-0 right-2 hidden items-center xl:flex">
                 <kbd className="hidden lg:inline-flex items-center gap-1 rounded border border-transparent glass px-1.5 py-0.5 text-[10px] font-medium text-text-tertiary/60">
                   <span className="text-xs">⌘</span>K
                 </kbd>
@@ -115,10 +115,11 @@ const TopBar = ({ breadcrumbs, searchPlaceholder = 'Search...', onSearch, action
 
         {/* Actions (theme toggle, notifications, user menu) */}
         {actions && (
-          <div className="flex items-center gap-3 animate-fadeIn">
+          <div className="ml-2 flex shrink-0 items-center gap-2 animate-fadeIn md:ml-3 md:gap-3">
             {actions}
           </div>
         )}
+        </div>
       </div>
       
       {/* Bottom divider (premium) */}

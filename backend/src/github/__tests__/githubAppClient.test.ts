@@ -21,7 +21,7 @@ describe("getInstallationClient", () => {
     databaseUrl: "",
     redisUrl: "",
     queueName: "q",
-    aiMode: "mock",
+    aiMode: "live",
     enableOpenAi: false,
     openAiKey: undefined,
     aiModel: "gpt-4.1-mini",

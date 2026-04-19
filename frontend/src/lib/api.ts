@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 type Job = {
   id: number;
   repoFullName: string;
+  headSha?: string;
+  installationId?: number;
   status: string;
   uiStatus?: string;
   summary?: string;
@@ -112,7 +114,21 @@ export const useReposQuery = () =>
   useQuery({
     queryKey: ["repos"],
     queryFn: async () => {
-      const res = await api.get<Envelope<Array<{ id: string; fullName: string }>>>("/api/repos");
+      const res = await api.get<
+        Envelope<
+          Array<{
+            id: number;
+            fullName: string;
+            owner: string;
+            name: string;
+            defaultBranch: string;
+            lastPrNumber?: number;
+            lastHeadSha?: string;
+            lastInstallationId?: number;
+            lastSeenAt?: string;
+          }>
+        >
+      >("/api/repos");
       return res.data.data;
     }
   });
