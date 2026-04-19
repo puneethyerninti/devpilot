@@ -8,6 +8,9 @@ node_modules/
 
 # Build output
 dist/
+coverage/
+backend/coverage/
+frontend/coverage/
 
 # Local databases
 mongo-data/

@@ -1,6 +1,28 @@
 import { test, expect } from "@playwright/test";
 
 test("jobs page renders running status and progress in mock mode", async ({ page }) => {
+  await page.route("**/api/users/me**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          login: "devpilot-user",
+          role: "admin"
+        }
+      })
+    });
+  });
+
+  await page.route("**/api/workers**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, data: [] })
+    });
+  });
+
   await page.route("**/api/jobs**", async (route) => {
     await route.fulfill({
       status: 200,

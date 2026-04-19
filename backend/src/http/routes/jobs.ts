@@ -25,6 +25,7 @@ const runJobSchema = z.object({
 });
 
 const idSchema = z.object({ id: z.coerce.number().int().positive() });
+const queueJobIdSchema = z.object({ queueJobId: z.string().min(1) });
 
 const toUiStatus = (job: {
   status: JobStatus;
@@ -42,6 +43,67 @@ const toUiStatus = (job: {
 
 export const createJobRouter = (queue: Queue<JobPayload>) => {
   const router = Router();
+
+  router.get(
+    "/dlq",
+    requireRole("operator"),
+    asyncHandler(async (_req, res) => {
+      const failedJobs = await queue.getFailed(0, 99);
+      const payload = failedJobs.map((job) => ({
+        queueJobId: String(job.id ?? ""),
+        name: job.name,
+        attemptsMade: job.attemptsMade,
+        failedReason: job.failedReason,
+        timestamp: job.timestamp,
+        finishedOn: job.finishedOn ?? null,
+        data: {
+          repo: job.data?.repo,
+          prNumber: job.data?.prNumber,
+          dbJobId: job.data?.dbJobId
+        }
+      }));
+
+      sendOk(res, payload);
+    })
+  );
+
+  router.post(
+    "/dlq/:queueJobId/retry",
+    requireRole("operator"),
+    asyncHandler(async (req, res) => {
+      const parsed = queueJobIdSchema.safeParse(req.params);
+      if (!parsed.success) {
+        return sendError(res, "Invalid queue job id", 400);
+      }
+
+      const queueJobId = parsed.data.queueJobId;
+      const failedJob = await queue.getJob(queueJobId);
+      if (!failedJob) {
+        return sendError(res, "DLQ job not found", 404);
+      }
+
+      const state = await failedJob.getState();
+      if (state !== "failed") {
+        return sendError(res, `Job is not failed (current state: ${state})`, 400);
+      }
+
+      await failedJob.retry();
+
+      const dbJobId = failedJob.data?.dbJobId;
+      if (typeof dbJobId === "number") {
+        await prisma.actionLog.create({
+          data: {
+            jobId: dbJobId,
+            kind: "job.dlq.retry",
+            message: `Retried failed queue job ${queueJobId}`,
+            metadata: { queueJobId, retriedBy: req.user?.login ?? "unknown" }
+          }
+        });
+      }
+
+      sendOk(res, { queueJobId }, 202);
+    })
+  );
 
   router.get(
     "/",

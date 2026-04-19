@@ -10,6 +10,11 @@ DevPilot Phase 3 delivers an end-to-end dashboard for monitoring AI pull-request
 - **Infra** (`/docker-compose.yml`, `/ci/.github/workflows/ci.yml`, optional `/infra`): Postgres, Redis, GitHub Actions CI pipeline, and sample env manifests.
 - **Demo** (`/demo`): Legacy standalone webhook/worker sample retained for reference; production code lives under `/backend` and `/worker`.
 
+## Portfolio Docs
+- `docs/ARCHITECTURE.md` - technical architecture and service boundaries
+- `ops/RUNBOOK.md` - production operations and incident runbook
+- `docs/DEMO_SCRIPT.md` - end-to-end demo narrative for interviews
+
 ## Quickstart
 1. **Clone & install**
    ```bash
@@ -117,6 +122,8 @@ All REST responses follow `{ ok: boolean, data?: any, error?: string }`.
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
 | GET | `/api/jobs?status=&repo=&page=&perPage=` | Paginated filterable jobs |
+| GET | `/api/jobs/dlq` | List failed queue jobs (operator+) |
+| POST | `/api/jobs/dlq/:queueJobId/retry` | Retry a failed queue job (operator+) |
 | GET | `/api/jobs/:id` | Job detail + files + logs |
 | POST | `/api/jobs/:id/retry` | Retry a job (operator+ roles) |
 | POST | `/api/jobs/run` | Run new analysis (admin only) |
@@ -166,7 +173,10 @@ The frontend subscribes globally for list updates and per-job channels (`job:{id
 - `pnpm lint`, `pnpm test`, `pnpm build` – delegate to packages
 
 ## CI/CD
-`/ci/.github/workflows/ci.yml` builds Docker images, runs lint/test/build, and deploys to staging on `main`. Adjust secrets in GitHub repo settings.
+`/ci/.github/workflows/ci.yml` builds Docker images, runs lint/test/build with coverage, executes Playwright tests, and can trigger Render staging deploy on `main`.
+
+To enable staging deploy, set GitHub secret:
+- `RENDER_DEPLOY_HOOK_STAGING` - Render deploy hook URL for the staging service
 
 ## Troubleshooting
 - Redis adapter issues → ensure `redis-cli ping` responds `PONG`.

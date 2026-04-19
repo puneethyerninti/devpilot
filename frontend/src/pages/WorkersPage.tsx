@@ -1,12 +1,15 @@
-﻿import { useMemo } from 'react';
+﻿import { useMemo, useState } from 'react';
 import StatusBadge from '../components/StatusBadge';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import Input from '../components/ui/Input';
 import StatCard from '../components/ui/StatCard';
 import { useWorkersQuery } from '../lib/api';
 
 const WorkersPage = (): JSX.Element => {
   const { data: workers, isLoading, isRefetching, refetch } = useWorkersQuery();
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
 
   const counts = useMemo(() => {
     const stats = { online: 0, offline: 0 };
@@ -16,6 +19,22 @@ const WorkersPage = (): JSX.Element => {
     });
     return stats;
   }, [workers]);
+
+  const filteredWorkers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return (workers ?? [])
+      .filter((worker) => {
+        if (statusFilter !== 'all' && worker.status !== statusFilter) return false;
+        if (!query) return true;
+        return worker.workerId.toLowerCase().includes(query);
+      })
+      .sort((a, b) => new Date(b.lastHeartbeat).getTime() - new Date(a.lastHeartbeat).getTime());
+  }, [workers, search, statusFilter]);
+
+  const totalQueueDepth = useMemo(
+    () => (workers ?? []).reduce((sum, worker) => sum + (worker.queueDepth ?? 0), 0),
+    [workers]
+  );
 
   return (
     <div className="space-y-5">
@@ -32,6 +51,24 @@ const WorkersPage = (): JSX.Element => {
             </Button>
           </div>
         </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr),200px]">
+        <Input
+          placeholder="Search worker ID"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value as 'all' | 'online' | 'offline')}
+          className="h-10 rounded-lg border border-border bg-panel px-3 text-sm text-foreground"
+          aria-label="Filter workers by status"
+        >
+          <option value="all">All statuses</option>
+          <option value="online">Online</option>
+          <option value="offline">Offline</option>
+        </select>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -65,11 +102,15 @@ const WorkersPage = (): JSX.Element => {
           gradient="purple"
           icon={<svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>}
         >
-          {typeof workers?.[0]?.queueDepth === 'number' ? workers[0].queueDepth : 0}
+          {totalQueueDepth}
         </StatCard>
       </div>
 
       <Card title="Fleet" subtitle="Health, assignment, and heartbeats">
+        <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
+          <span>Showing {filteredWorkers.length} worker(s)</span>
+          <span>{statusFilter === 'all' ? 'All statuses' : `${statusFilter} only`}</span>
+        </div>
         <div className="grid gap-4 p-1 sm:grid-cols-2 lg:grid-cols-3">
           {isLoading && (
             <div className="col-span-full rounded-xl border border-border bg-panel/50 p-8 text-center text-sm text-muted-foreground backdrop-blur-sm">
@@ -77,16 +118,16 @@ const WorkersPage = (): JSX.Element => {
               <p className="mt-3">Loading workers…</p>
             </div>
           )}
-          {!isLoading && (workers ?? []).length === 0 && (
+          {!isLoading && filteredWorkers.length === 0 && (
             <div className="col-span-full rounded-xl border border-border bg-panel/50 p-12 text-center backdrop-blur-sm">
               <svg className="mx-auto h-12 w-12 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="mt-4 text-sm font-medium text-foreground">No workers reported yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">Workers will appear here once they start sending heartbeats</p>
+              <p className="mt-4 text-sm font-medium text-foreground">No matching workers</p>
+              <p className="mt-1 text-xs text-muted-foreground">Try clearing search or status filters</p>
             </div>
           )}
-          {(workers ?? []).map((worker) => {
+          {filteredWorkers.map((worker) => {
             const isOnline = worker.status === 'online';
             const heartbeatTime = new Date(worker.lastHeartbeat);
             const timeSinceHeartbeat = Math.floor((Date.now() - heartbeatTime.getTime()) / 1000);

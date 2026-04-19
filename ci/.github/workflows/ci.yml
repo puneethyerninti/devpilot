@@ -70,8 +70,8 @@ jobs:
 
       - name: Unit tests
         run: |
-          pnpm --dir backend test -- --runInBand
-          pnpm --dir frontend test -- --runInBand
+          pnpm --filter @devpilot/backend run test -- --runInBand --coverage
+          pnpm --dir frontend test:coverage
 
       - name: Build packages
         run: |
@@ -84,11 +84,15 @@ jobs:
           pnpm --dir backend prisma migrate deploy
           pnpm --dir backend prisma db seed
 
-      - name: Deploy staging
-        if: github.ref == 'refs/heads/main'
+      - name: Deploy staging (Render)
+        if: github.ref == 'refs/heads/main' && secrets.RENDER_DEPLOY_HOOK_STAGING != ''
         run: |
-          echo "Deploying to staging..."
-          # TODO: integrate with your hosting provider (Render, Railway, Fly.io, etc.)
+          curl --fail --show-error --silent -X POST "${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}"
+
+      - name: Deploy staging skipped
+        if: github.ref == 'refs/heads/main' && secrets.RENDER_DEPLOY_HOOK_STAGING == ''
+        run: |
+          echo "RENDER_DEPLOY_HOOK_STAGING is not configured; skipping automated staging deploy."
 
   e2e-optional:
     runs-on: ubuntu-latest
@@ -124,7 +128,6 @@ jobs:
           version: 9.12.2
           run_install: true
       - name: Run Playwright
-        if: ${{ env.OPENAI_API_KEY != '' && env.GITHUB_WEBHOOK_SECRET != '' }}
         run: |
           pnpm --dir frontend exec playwright install --with-deps
           pnpm --dir frontend exec playwright test
