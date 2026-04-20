@@ -9,6 +9,8 @@ import type { Queue } from "bullmq";
 import type { JobPayload } from "../../queues/jobProcessor";
 import { enqueuePullRequestJob } from "../../queues";
 import type { $Enums } from "@prisma/client";
+import type { AppConfig } from "../../config";
+import { resolveLivePullRequestContext } from "../../services/githubResolution";
 type JobStatus = $Enums.JobStatus;
 
 const progressFor = (status: JobStatus) => {
@@ -20,7 +22,7 @@ const progressFor = (status: JobStatus) => {
 const runJobSchema = z.object({
   repo: z.string(),
   prNumber: z.coerce.number(),
-  headSha: z.string().min(6),
+  headSha: z.string().min(6).optional(),
   installationId: z.coerce.number().int().positive().optional()
 });
 
@@ -41,7 +43,7 @@ const toUiStatus = (job: {
   return job.status;
 };
 
-export const createJobRouter = (queue: Queue<JobPayload>) => {
+export const createJobRouter = (queue: Queue<JobPayload>, config: AppConfig) => {
   const router = Router();
 
   router.get(
@@ -228,12 +230,24 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
       if (!job) {
         return sendError(res, "Job not found", 404);
       }
+      let resolved;
+      try {
+        resolved = await resolveLivePullRequestContext(config, {
+          repo: job.repo.fullName,
+          prNumber: job.prNumber,
+          headSha: job.headSha,
+          installationId: job.installationId ?? undefined
+        });
+      } catch (err) {
+        return sendError(res, err instanceof Error ? err.message : "Failed to resolve GitHub PR context", 400);
+      }
+
       const newJob = await enqueuePullRequestJob(queue, {
         repo: job.repo.fullName,
         prNumber: job.prNumber,
-        headSha: job.headSha,
+        headSha: resolved.headSha,
         triggeredBy: req.user!.login,
-        installationId: job.installationId ?? undefined,
+        installationId: resolved.installationId,
         forceLive: true
       });
       sendOk(res, { jobId: newJob.id }, 202);
@@ -254,12 +268,24 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
         return sendError(res, "Job not found", 404);
       }
 
+      let resolved;
+      try {
+        resolved = await resolveLivePullRequestContext(config, {
+          repo: job.repo.fullName,
+          prNumber: job.prNumber,
+          headSha: job.headSha,
+          installationId: job.installationId ?? undefined
+        });
+      } catch (err) {
+        return sendError(res, err instanceof Error ? err.message : "Failed to resolve GitHub PR context", 400);
+      }
+
       const newJob = await enqueuePullRequestJob(queue, {
         repo: job.repo.fullName,
         prNumber: job.prNumber,
-        headSha: job.headSha,
+        headSha: resolved.headSha,
         triggeredBy: req.user!.login,
-        installationId: job.installationId ?? undefined,
+        installationId: resolved.installationId,
         forceLive: true
       });
 
@@ -276,12 +302,25 @@ export const createJobRouter = (queue: Queue<JobPayload>) => {
         return sendError(res, parsed.error.message, 400);
       }
       const payload = parsed.data;
+
+      let resolved;
+      try {
+        resolved = await resolveLivePullRequestContext(config, {
+          repo: payload.repo,
+          prNumber: payload.prNumber,
+          headSha: payload.headSha,
+          installationId: payload.installationId
+        });
+      } catch (err) {
+        return sendError(res, err instanceof Error ? err.message : "Failed to resolve GitHub PR context", 400);
+      }
+
       const job = await enqueuePullRequestJob(queue, {
         repo: payload.repo,
         prNumber: payload.prNumber,
-        headSha: payload.headSha,
+        headSha: resolved.headSha,
         triggeredBy: req.user!.login,
-        installationId: payload.installationId,
+        installationId: resolved.installationId,
         forceLive: true
       });
       sendOk(res, { jobId: job.id }, 202);

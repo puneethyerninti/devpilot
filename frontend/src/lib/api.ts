@@ -43,7 +43,7 @@ export const useJobsQuery = (params: { status?: string; enabled?: boolean }) =>
   useQuery({
     queryKey: ["jobs", { status: params.status }],
     queryFn: async () => {
-      const { enabled: _enabled, ...queryParams } = params;
+      const queryParams = params.status ? { status: params.status } : {};
       const res = await api.get<Envelope<{ jobs: Job[] }>>("/api/jobs", { params: queryParams });
       return res.data.data.jobs;
     },
@@ -89,7 +89,7 @@ export const useRunAi = () => {
 export const useRunJob = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { repo: string; prNumber: number; headSha: string; installationId?: number }) => {
+    mutationFn: async (payload: { repo: string; prNumber: number; headSha?: string; installationId?: number }) => {
       await api.post(`/api/jobs/run`, payload);
     },
     onSuccess: () => {

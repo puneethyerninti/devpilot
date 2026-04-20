@@ -79,7 +79,7 @@ const jobQueue = createJobQueue(config);
 
 app.use(createAuthRouter(config));
 app.use("/api/webhooks", createWebhookRouter(config, jobQueue));
-app.use("/api", createApiRouter(jobQueue));
+app.use("/api", createApiRouter(jobQueue, config));
 
 app.get(
   "/health",

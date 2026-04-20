@@ -48,6 +48,28 @@ const signToken = (payload: JwtPayload, config: AppConfig) =>
     expiresIn: "7d"
   });
 
+const configuredAdminLogins = () =>
+  (process.env.ADMIN_GITHUB_LOGINS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+const shouldGrantBootstrapAdmin = async (config: AppConfig, login: string, existingRole?: UserRole) => {
+  if (existingRole) return existingRole;
+
+  const loginLower = login.toLowerCase();
+  if (configuredAdminLogins().includes(loginLower)) {
+    return "admin" as UserRole;
+  }
+
+  if (config.nodeEnv === "production") {
+    return "viewer" as UserRole;
+  }
+
+  const adminCount = await prisma.user.count({ where: { role: "admin" } });
+  return adminCount === 0 ? ("admin" as UserRole) : ("viewer" as UserRole);
+};
+
 export const createAuthRouter = (config: AppConfig) => {
   const router = Router();
 
@@ -85,6 +107,9 @@ export const createAuthRouter = (config: AppConfig) => {
 
       const ghProfile = await fetchGitHubProfile(accessToken);
 
+      const existing = await prisma.user.findUnique({ where: { githubId: ghProfile.id.toString() } });
+      const roleForCreate = await shouldGrantBootstrapAdmin(config, ghProfile.login, existing?.role as UserRole | undefined);
+
       const user = await prisma.user.upsert({
         where: { githubId: ghProfile.id.toString() },
         create: {
@@ -92,7 +117,7 @@ export const createAuthRouter = (config: AppConfig) => {
           login: ghProfile.login,
           name: ghProfile.name ?? ghProfile.login,
           avatarUrl: ghProfile.avatar_url ?? "",
-          role: "viewer"
+          role: roleForCreate
         },
         update: {
           login: ghProfile.login,

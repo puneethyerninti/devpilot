@@ -1,3 +1,4 @@
+import type { Octokit } from "@octokit/rest";
 import { postReviewCommentsWithOctokit } from "../github";
 
 describe("services/github", () => {
@@ -9,7 +10,7 @@ describe("services/github", () => {
 
     const octokit = {
       pulls
-    } as any;
+    } as unknown as Octokit;
 
     await postReviewCommentsWithOctokit(octokit, {
       owner: "org",

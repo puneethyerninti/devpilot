@@ -91,6 +91,7 @@ GITHUB_APP_ID=
 GITHUB_PRIVATE_KEY_FILE=
 GITHUB_PRIVATE_KEY_BASE64=
 GITHUB_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+ADMIN_GITHUB_LOGINS=
 JWT_SECRET=
 SESSION_SECRET=
 JWT_ISSUER=devpilot
@@ -140,8 +141,10 @@ curl -X POST -H "$AUTH" http://localhost:4000/api/jobs/1/retry
 curl -X POST http://localhost:4000/api/jobs/run \
   -H "Content-Type: application/json" \
    -H "$AUTH" \
-   -d '{"repo":"devpilot/repo","prNumber":42,"headSha":"abc123","installationId":12345678}'
+   -d '{"repo":"devpilot/repo","prNumber":42}'
 ```
+
+`headSha` and `installationId` are optional on `/api/jobs/run`; backend auto-resolves them from the GitHub App installation when available.
 
 ### PowerShell API commands
 Use `curl.exe` (not PowerShell `curl` alias) or `Invoke-RestMethod`.
@@ -152,8 +155,10 @@ $AUTH = "Bearer $TOKEN"
 
 curl.exe -H "Authorization: $AUTH" http://localhost:4000/api/jobs
 
-Invoke-RestMethod -Method Post -Uri "http://localhost:4000/api/jobs/run" -Headers @{ Authorization = $AUTH } -ContentType "application/json" -Body '{"repo":"owner/repo","prNumber":42,"headSha":"abc123","installationId":12345678}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:4000/api/jobs/run" -Headers @{ Authorization = $AUTH } -ContentType "application/json" -Body '{"repo":"owner/repo","prNumber":42}'
 ```
+
+If you want specific users to auto-receive admin role on first OAuth login in local/dev, set `ADMIN_GITHUB_LOGINS` as a comma-separated list in `backend/.env`.
 
 ## Socket.IO Events
 Messages shape: `{ type: string; payload: unknown }`.

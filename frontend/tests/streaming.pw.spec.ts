@@ -49,7 +49,7 @@ test("jobs page renders running status and progress in mock mode", async ({ page
 
   await page.goto("/jobs");
 
-  await expect(page.getByText("Job Control Room")).toBeVisible();
+  await expect(page.getByText("Live Review Queue")).toBeVisible();
   await expect(page.getByText("running")).toBeVisible();
   await expect(page.getByText("acme/repo")).toBeVisible();
 });

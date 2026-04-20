@@ -1,28 +1,40 @@
-﻿import { useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import StatusBadge from '../components/StatusBadge';
 import Button from '../components/ui/Button';
-import Card from '../components/ui/Card';
-import Input from '../components/ui/Input';
-import StatCard from '../components/ui/StatCard';
 import { useWorkersQuery } from '../lib/api';
 
+const secondsSince = (isoDate: string, nowMs: number) => {
+  return Math.max(0, Math.floor((nowMs - new Date(isoDate).getTime()) / 1000));
+};
+
+const relativeHeartbeat = (isoDate: string, nowMs: number) => {
+  const seconds = secondsSince(isoDate, nowMs);
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ago`;
+};
+
+const freshnessLabel = (ageSeconds: number) => {
+  if (ageSeconds <= 20) return { label: 'Healthy', style: 'text-emerald-300' };
+  if (ageSeconds <= 60) return { label: 'Lagging', style: 'text-amber-300' };
+  return { label: 'Stale', style: 'text-rose-300' };
+};
+
 const WorkersPage = (): JSX.Element => {
-  const { data: workers, isLoading, isRefetching, refetch } = useWorkersQuery();
+  const { data: workers = [], isLoading, isRefetching, refetch } = useWorkersQuery();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+  const [now, setNow] = useState(() => Date.now());
 
-  const counts = useMemo(() => {
-    const stats = { online: 0, offline: 0 };
-    (workers ?? []).forEach((w) => {
-      if (w.status === 'online') stats.online += 1;
-      else stats.offline += 1;
-    });
-    return stats;
-  }, [workers]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const filteredWorkers = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return (workers ?? [])
+    return workers
       .filter((worker) => {
         if (statusFilter !== 'all' && worker.status !== statusFilter) return false;
         if (!query) return true;
@@ -31,169 +43,164 @@ const WorkersPage = (): JSX.Element => {
       .sort((a, b) => new Date(b.lastHeartbeat).getTime() - new Date(a.lastHeartbeat).getTime());
   }, [workers, search, statusFilter]);
 
-  const totalQueueDepth = useMemo(
-    () => (workers ?? []).reduce((sum, worker) => sum + (worker.queueDepth ?? 0), 0),
-    [workers]
-  );
+  const stats = useMemo(() => {
+    const result = {
+      total: workers.length,
+      online: 0,
+      offline: 0,
+      queueDepth: 0,
+    };
+
+    workers.forEach((worker) => {
+      if (worker.status === 'online') result.online += 1;
+      else result.offline += 1;
+      result.queueDepth += worker.queueDepth ?? 0;
+    });
+
+    return result;
+  }, [workers]);
 
   return (
-    <div className="space-y-5">
-      <div className="overflow-hidden rounded-2xl border border-border bg-gradient-to-r from-emerald-900 via-slate-900 to-slate-800 p-6 text-white shadow-xl">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2">
-            <p className="text-sm uppercase tracking-[0.2em] text-emerald-200">Worker grid</p>
-            <h2 className="text-2xl font-semibold">Realtime agents</h2>
-            <p className="text-sm text-emerald-100/80">Heartbeats, assignments, and queue depth at a glance.</p>
+    <section className="space-y-5">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Fleet Control</p>
+            <h2 className="mt-1 text-2xl font-semibold text-white">Worker Fleet</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Heartbeat freshness, queue pressure, and current assignments in realtime.
+            </p>
           </div>
+          <Button variant="secondary" disabled={isLoading || isRefetching} onClick={() => refetch()}>
+            {isRefetching ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Total Workers</p>
+          <p className="mt-1 text-2xl font-semibold text-white">{stats.total}</p>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Online</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-300">{stats.online}</p>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Offline</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-300">{stats.offline}</p>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Queue Depth</p>
+          <p className="mt-1 text-2xl font-semibold text-cyan-300">{stats.queueDepth}</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 overflow-hidden">
+        <div className="border-b border-slate-800 px-4 py-3 sm:px-5 sm:py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2">
-            <Button variant="secondary" disabled={isLoading || isRefetching} onClick={() => refetch()}>
-              {isRefetching ? 'Refreshing…' : 'Refresh'}
-            </Button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('all')}
+              className={[
+                'rounded-lg border px-2.5 py-1 text-xs font-medium transition',
+                statusFilter === 'all'
+                  ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200'
+                  : 'border-slate-700 bg-slate-900 text-slate-300',
+              ].join(' ')}
+            >
+              all
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('online')}
+              className={[
+                'rounded-lg border px-2.5 py-1 text-xs font-medium transition',
+                statusFilter === 'online'
+                  ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200'
+                  : 'border-slate-700 bg-slate-900 text-slate-300',
+              ].join(' ')}
+            >
+              online
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('offline')}
+              className={[
+                'rounded-lg border px-2.5 py-1 text-xs font-medium transition',
+                statusFilter === 'offline'
+                  ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200'
+                  : 'border-slate-700 bg-slate-900 text-slate-300',
+              ].join(' ')}
+            >
+              offline
+            </button>
           </div>
+
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search worker id"
+            className="w-full lg:w-72 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+          />
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-800 text-sm">
+            <thead className="bg-slate-950/70 text-xs uppercase tracking-[0.12em] text-slate-400">
+              <tr>
+                <th className="px-4 py-3 text-left">Worker</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-left">Heartbeat</th>
+                <th className="px-4 py-3 text-left">Queue Depth</th>
+                <th className="px-4 py-3 text-left">Current Job</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {isLoading && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                    Loading worker fleet...
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && filteredWorkers.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                    No workers match the current filters.
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && filteredWorkers.map((worker) => {
+                const ageSeconds = secondsSince(worker.lastHeartbeat, now);
+                const freshness = freshnessLabel(ageSeconds);
+
+                return (
+                  <tr key={worker.workerId} className="hover:bg-slate-800/40 transition">
+                    <td className="px-4 py-3 font-semibold text-slate-100">{worker.workerId}</td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={worker.status} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className={freshness.style}>{freshness.label}</p>
+                      <p className="text-xs text-slate-400">
+                        {relativeHeartbeat(worker.lastHeartbeat, now)} ({new Date(worker.lastHeartbeat).toLocaleTimeString()})
+                      </p>
+                    </td>
+                    <td className="px-4 py-3 text-slate-200">{worker.queueDepth ?? 0}</td>
+                    <td className="px-4 py-3 text-slate-200">
+                      {worker.currentJobId ? `#${worker.currentJobId}` : 'idle'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
-
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr),200px]">
-        <Input
-          placeholder="Search worker ID"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-        <select
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value as 'all' | 'online' | 'offline')}
-          className="h-10 rounded-lg border border-border bg-panel px-3 text-sm text-foreground"
-          aria-label="Filter workers by status"
-        >
-          <option value="all">All statuses</option>
-          <option value="online">Online</option>
-          <option value="offline">Offline</option>
-        </select>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard 
-          title="Total Workers" 
-          subtitle="Fleet size" 
-          gradient="blue"
-          icon={<svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" /></svg>}
-        >
-          {workers?.length ?? 0}
-        </StatCard>
-        <StatCard 
-          title="Online" 
-          subtitle="Active now" 
-          gradient="green"
-          icon={<svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z" /></svg>}
-        >
-          {counts.online}
-        </StatCard>
-        <StatCard 
-          title="Offline" 
-          subtitle="Attention needed" 
-          gradient="orange"
-          icon={<svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
-        >
-          {counts.offline}
-        </StatCard>
-        <StatCard 
-          title="Queue Depth" 
-          subtitle="Jobs waiting" 
-          gradient="purple"
-          icon={<svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>}
-        >
-          {totalQueueDepth}
-        </StatCard>
-      </div>
-
-      <Card title="Fleet" subtitle="Health, assignment, and heartbeats">
-        <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
-          <span>Showing {filteredWorkers.length} worker(s)</span>
-          <span>{statusFilter === 'all' ? 'All statuses' : `${statusFilter} only`}</span>
-        </div>
-        <div className="grid gap-4 p-1 sm:grid-cols-2 lg:grid-cols-3">
-          {isLoading && (
-            <div className="col-span-full rounded-xl border border-border bg-panel/50 p-8 text-center text-sm text-muted-foreground backdrop-blur-sm">
-              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-              <p className="mt-3">Loading workers…</p>
-            </div>
-          )}
-          {!isLoading && filteredWorkers.length === 0 && (
-            <div className="col-span-full rounded-xl border border-border bg-panel/50 p-12 text-center backdrop-blur-sm">
-              <svg className="mx-auto h-12 w-12 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p className="mt-4 text-sm font-medium text-foreground">No matching workers</p>
-              <p className="mt-1 text-xs text-muted-foreground">Try clearing search or status filters</p>
-            </div>
-          )}
-          {filteredWorkers.map((worker) => {
-            const isOnline = worker.status === 'online';
-            const heartbeatTime = new Date(worker.lastHeartbeat);
-            const timeSinceHeartbeat = Math.floor((Date.now() - heartbeatTime.getTime()) / 1000);
-            const heartbeatStatus = timeSinceHeartbeat < 30 ? 'recent' : timeSinceHeartbeat < 120 ? 'stale' : 'old';
-            
-            return (
-              <div
-                key={worker.workerId}
-                className="group relative flex flex-col gap-4 overflow-hidden rounded-xl border border-border/50 bg-panel/60 p-5 shadow-lg backdrop-blur-sm transition-all duration-300 hover:scale-[1.02] hover:border-accent/30 hover:shadow-xl"
-              >
-                {/* Glow effect */}
-                <div className={`pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-br opacity-0 transition-opacity group-hover:opacity-20 ${
-                  isOnline ? 'from-green-500/20 to-emerald-500/20' : 'from-slate-500/10 to-slate-500/10'
-                }`} aria-hidden />
-                
-                {/* Header */}
-                <div className="relative flex items-start justify-between gap-3">
-                  <div className="flex-1 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <div className={`flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br font-semibold text-white shadow-lg ${
-                        isOnline ? 'from-green-500 to-emerald-600' : 'from-slate-500 to-slate-600'
-                      }`}>
-                        {worker.workerId.slice(-2).toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">{worker.workerId}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {heartbeatStatus === 'recent' && '🟢 Just now'}
-                          {heartbeatStatus === 'stale' && '🟡 ' + heartbeatTime.toLocaleTimeString()}
-                          {heartbeatStatus === 'old' && '🔴 ' + heartbeatTime.toLocaleTimeString()}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <StatusBadge status={worker.status} />
-                </div>
-
-                {/* Metrics */}
-                <div className="relative grid grid-cols-2 gap-3 rounded-lg bg-muted/30 p-3 text-sm">
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-muted-foreground">Queue Depth</p>
-                    <p className="text-lg font-bold text-foreground">{worker.queueDepth ?? 0}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-muted-foreground">Current Job</p>
-                    <p className="truncate text-sm font-semibold text-foreground">
-                      {worker.currentJobId ? `#${worker.currentJobId}` : '—'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="relative flex items-center justify-between gap-2">
-                  <Button variant="outline" size="sm" disabled className="flex-1">
-                    Restart
-                  </Button>
-                  <Button variant="ghost" size="sm" disabled>
-                    Logs
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-    </div>
+    </section>
   );
 };
 

@@ -48,6 +48,22 @@ export const getInstallationClient = async (config: AppConfig, installationId: n
   return new Octokit({ auth: token });
 };
 
+export const getAppClient = async (config: AppConfig) => {
+  const auth = createAppAuth({
+    appId: config.githubAppId,
+    privateKey: resolvePrivateKey(config)
+  });
+
+  const { token } = await auth({ type: "app" });
+  return new Octokit({ auth: token });
+};
+
+export const getRepoInstallationId = async (config: AppConfig, owner: string, repo: string) => {
+  const appClient = await getAppClient(config);
+  const response = await appClient.apps.getRepoInstallation({ owner, repo });
+  return response.data.id;
+};
+
 export type ReviewCommentInput = { file: string; startLine: number; endLine: number; body: string };
 
 export const postReviewComments = async (octokit: Octokit, params: { owner: string; repo: string; pullNumber: number; comments: ReviewCommentInput[] }) => {

@@ -311,7 +311,7 @@ export const registerJobWorker = (config: AppConfig, workerId: string = `worker-
           publishProgress: async (progress) => {
             await publishSocketEvent({ type: "job.progress", payload: { id: dbJobId, progress } }, `job:${dbJobId}`);
           },
-          persistPartial: async (partialText, _force) => {
+          persistPartial: async (partialText) => {
             await prisma.pRJob
               .update({ where: { id: dbJobId }, data: { aiReviewMd: partialText.slice(0, 20000) } })
               .catch(() => undefined);

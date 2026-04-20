@@ -39,13 +39,14 @@ jobs:
       DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
       REDIS_URL: redis://localhost:6379
       FRONTEND_URL: http://localhost:5173
-      JWT_SECRET: ${{ secrets['JWT_SECRET'] }}
-      GITHUB_APP_ID: ${{ secrets['GITHUB_APP_ID'] }}
-      GITHUB_PRIVATE_KEY: ${{ secrets['GITHUB_PRIVATE_KEY'] }}
-      GITHUB_WEBHOOK_SECRET: ${{ secrets['GITHUB_WEBHOOK_SECRET'] }}
-      GITHUB_CLIENT_ID: ${{ secrets['GITHUB_CLIENT_ID'] }}
-      GITHUB_CLIENT_SECRET: ${{ secrets['GITHUB_CLIENT_SECRET'] }}
-      OPENAI_API_KEY: ${{ secrets['OPENAI_API_KEY'] }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
+      GITHUB_PRIVATE_KEY: ${{ secrets.GITHUB_PRIVATE_KEY }}
+      GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+      GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
+      GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RENDER_DEPLOY_HOOK_STAGING: ${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}
       AI_MODE: mock
     steps:
       - name: Checkout
@@ -85,12 +86,12 @@ jobs:
           pnpm --dir backend prisma db seed
 
       - name: Deploy staging (Render)
-        if: github.ref == 'refs/heads/main' && secrets.RENDER_DEPLOY_HOOK_STAGING != ''
+        if: github.ref == 'refs/heads/main' && env.RENDER_DEPLOY_HOOK_STAGING != ''
         run: |
-          curl --fail --show-error --silent -X POST "${{ secrets.RENDER_DEPLOY_HOOK_STAGING }}"
+          curl --fail --show-error --silent -X POST "$RENDER_DEPLOY_HOOK_STAGING"
 
       - name: Deploy staging skipped
-        if: github.ref == 'refs/heads/main' && secrets.RENDER_DEPLOY_HOOK_STAGING == ''
+        if: github.ref == 'refs/heads/main' && env.RENDER_DEPLOY_HOOK_STAGING == ''
         run: |
           echo "RENDER_DEPLOY_HOOK_STAGING is not configured; skipping automated staging deploy."
 
@@ -113,8 +114,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://devpilot:devpilot@localhost:5432/devpilotdb
       REDIS_URL: redis://localhost:6379
-      OPENAI_API_KEY: ${{ secrets['OPENAI_API_KEY'] }}
-      GITHUB_WEBHOOK_SECRET: ${{ secrets['GITHUB_WEBHOOK_SECRET'] }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

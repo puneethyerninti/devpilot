@@ -1,301 +1,209 @@
 ﻿import { useEffect, useMemo } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import AppShell from "./components/ui/AppShell";
-import JobsPage from "./pages/JobsPage";
-import JobDetail from "./pages/JobDetail";
-import WorkersPage from "./pages/WorkersPage";
-import { navItems } from "./config/navigation";
-import ParticleBackground from "./components/ui/ParticleBackground";
-import Badge from './components/ui/Badge';
-import { ToastProvider, useToast } from "./components/ui/Toast";
-import CommandPalette, { useCommandPalette } from "./components/ui/CommandPalette";
-import FloatingActionButton from "./components/ui/FloatingActionButton";
+import { useQueryClient } from '@tanstack/react-query';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import JobDetail from './pages/JobDetail';
+import JobsPage from './pages/JobsPage';
+import WorkersPage from './pages/WorkersPage';
 import { useJobsQuery, useMeQuery, useWorkersQuery } from './lib/api';
 import { initRealtime } from './lib/socket';
 
-// Create a client
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 1,
-    },
-  },
-});
+const isLiveStatus = (status?: string) => {
+  const value = (status ?? '').toLowerCase();
+  return value === 'queued' || value === 'processing' || value === 'running';
+};
 
-const AppContent = (): JSX.Element => {
-  const navigate = useNavigate();
+const getPageTitle = (pathname: string) => {
+  if (pathname.startsWith('/jobs/') && pathname.length > '/jobs/'.length) {
+    return 'Review Job Detail';
+  }
+  if (pathname.startsWith('/workers')) {
+    return 'Worker Fleet';
+  }
+  return 'Live Review Queue';
+};
+
+const stripProtocol = (url: string) => url.replace(/^https?:\/\//, '');
+
+const App = (): JSX.Element => {
   const location = useLocation();
   const queryClient = useQueryClient();
-  const { showToast } = useToast();
-  const { isOpen, setIsOpen } = useCommandPalette();
   const { data: me, isLoading: isMeLoading } = useMeQuery();
-  const { data: jobs } = useJobsQuery({ enabled: Boolean(me) });
-  const { data: workers } = useWorkersQuery({ enabled: Boolean(me) });
+  const { data: jobs = [] } = useJobsQuery({ enabled: Boolean(me) });
+  const { data: workers = [] } = useWorkersQuery({ enabled: Boolean(me) });
 
   useEffect(() => {
     if (!me) return;
     initRealtime(queryClient);
   }, [me, queryClient]);
 
-  const jobsCount = jobs?.length ?? 0;
-  const workersCount = workers?.length ?? 0;
+  const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+  const loginUrl = new URL('/auth/github', apiBase).toString();
+  const callbackUrl = new URL('/auth/github/callback', apiBase).toString();
+  const pageTitle = getPageTitle(location.pathname);
 
-  const navItemsWithBadges = useMemo(
-    () => navItems.map((item) => {
-      if (item.label === 'Jobs') return { ...item, badge: jobsCount };
-      if (item.label === 'Workers') return { ...item, badge: workersCount };
-      return item;
-    }),
-    [jobsCount, workersCount]
+  const navItems = useMemo(
+    () => [
+      { label: 'Jobs', to: '/jobs', count: jobs.length },
+      { label: 'Workers', to: '/workers', count: workers.length },
+    ],
+    [jobs.length, workers.length],
   );
 
-  const breadcrumbs = useMemo(() => {
-    const segments = location.pathname.split('/').filter(Boolean);
-    if (segments.length === 0) {
-      return <span>Dashboard</span>;
-    }
+  const activeJobs = useMemo(
+    () => jobs.filter((job) => isLiveStatus(job.uiStatus ?? job.status)).length,
+    [jobs],
+  );
 
-    return (
-      <>
-        <span className="text-text-secondary/70">DevPilot</span>
-        {segments.map((segment, index) => (
-          <span key={`${segment}-${index}`} className="inline-flex items-center gap-2">
-            <span className="text-text-tertiary">/</span>
-            <span className={index === segments.length - 1 ? 'text-text-primary' : 'text-text-secondary'}>
-              {segment === 'jobs' ? 'Jobs' : segment === 'workers' ? 'Workers' : `#${segment}`}
-            </span>
-          </span>
-        ))}
-      </>
-    );
-  }, [location.pathname]);
-
-  const handleGlobalSearch = (query: string) => {
-    const value = query.trim().toLowerCase();
-    if (!value) return;
-
-    const numericId = value.match(/\d+/)?.[0];
-    if (value.startsWith('job') && numericId) {
-      navigate(`/jobs/${numericId}`);
-      return;
-    }
-
-    if (value.includes('worker') || value.includes('agent')) {
-      navigate('/workers');
-      return;
-    }
-
-    navigate('/jobs');
-  };
-
-  const initials = me?.login?.slice(0, 2).toUpperCase() ?? '';
-
-  const topBarActions = me ? (
-    <>
-      {me.role && (
-        <Badge variant={me.role === 'admin' ? 'primary' : 'default'} size="sm">
-          {me.role.toUpperCase()}
-        </Badge>
-      )}
-      <div className="flex items-center gap-2 rounded-lg glass px-2.5 py-1.5">
-        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-primary-400 to-primary-600 text-[11px] font-semibold text-white">
-          {initials}
-        </span>
-        <div className="leading-tight">
-          <p className="text-xs font-semibold text-text-primary">{me.login}</p>
-          <p className="text-[10px] text-text-secondary">Account</p>
-        </div>
-      </div>
-    </>
-  ) : null;
-
-  const sidebarFooter = me ? (
-    <div className="space-y-2 text-xs">
-      <p className="font-semibold text-text-primary">Auth Session</p>
-      <div className="flex items-center justify-between text-text-secondary">
-        <span>User</span>
-        <span className="truncate pl-2 text-text-primary">{me.login}</span>
-      </div>
-      <div className="flex items-center justify-between text-text-secondary">
-        <span>Role</span>
-        <span className="text-text-primary uppercase">{me.role}</span>
-      </div>
-      <div className="flex items-center justify-between text-text-secondary">
-        <span>Endpoint</span>
-        <span className="text-text-primary">{(import.meta.env.VITE_API_URL ?? "http://localhost:4000").replace(/^https?:\/\//, "")}</span>
-      </div>
-    </div>
-  ) : null;
+  const onlineWorkers = useMemo(
+    () => workers.filter((worker) => worker.status === 'online').length,
+    [workers],
+  );
 
   if (isMeLoading) {
     return (
-      <div className="min-h-screen bg-base text-text-primary flex items-center justify-center">
-        <div className="text-sm text-text-secondary">Checking session…</div>
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
+        <div className="text-sm text-slate-300">Checking session...</div>
       </div>
     );
   }
 
   if (!me) {
-    const apiBase = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
-    const loginUrl = new URL("/auth/github", apiBase).toString();
-    const callbackUrl = new URL("/auth/github/callback", apiBase).toString();
-
     return (
-      <div className="min-h-screen bg-base text-text-primary flex items-center justify-center p-6">
-        <div className="max-w-2xl w-full rounded-2xl border border-border bg-elevated p-8 space-y-6 shadow-2xl">
-          <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.2em] text-text-secondary">DevPilot Realtime Review</p>
-            <h1 className="text-2xl font-semibold">Connect GitHub to see live PR reviews</h1>
-            <p className="text-sm text-text-secondary">
-              Sign in once to unlock real-time job streaming, worker status, and detailed PR review context.
-            </p>
+      <div className="min-h-screen bg-slate-950 text-slate-100 p-6 sm:p-10">
+        <div className="mx-auto max-w-3xl rounded-3xl border border-slate-800 bg-slate-900/80 p-8 shadow-2xl shadow-cyan-950/30">
+          <p className="text-xs uppercase tracking-[0.24em] text-cyan-300">DevPilot Control Center</p>
+          <h1 className="mt-3 text-3xl font-semibold text-white">Simple realtime PR review dashboard</h1>
+          <p className="mt-3 text-sm text-slate-300">
+            Connect GitHub once. Then watch queue status, logs, and worker health update live without refresh.
+          </p>
+
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-xs text-slate-400">Queue</p>
+              <p className="mt-1 text-sm font-semibold text-slate-100">Live status flow</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-xs text-slate-400">Workers</p>
+              <p className="mt-1 text-sm font-semibold text-slate-100">Heartbeat + load</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-xs text-slate-400">Details</p>
+              <p className="mt-1 text-sm font-semibold text-slate-100">Streaming logs</p>
+            </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-text-secondary">Jobs</p>
-              <p className="text-sm font-medium">Live queue updates</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-text-secondary">Workers</p>
-              <p className="text-sm font-medium">Heartbeat + assignment</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-text-secondary">Review Detail</p>
-              <p className="text-sm font-medium">Summary, findings, logs</p>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-border p-4 space-y-2 bg-base/40">
-            <p className="text-sm font-medium">Auth endpoint</p>
-            <p className="text-xs text-text-secondary break-all">{loginUrl}</p>
-            <p className="text-xs text-text-secondary">If sign-in fails, confirm your GitHub OAuth callback URL is exactly <span className="text-text-primary">{callbackUrl}</span>.</p>
+          <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300">
+            <p className="font-semibold text-slate-100">OAuth callback must match exactly</p>
+            <p className="mt-1 break-all text-cyan-300">{callbackUrl}</p>
           </div>
 
           <a
             href={loginUrl}
-            className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium bg-primary text-white hover:bg-primary-600"
+            className="mt-6 inline-flex items-center justify-center rounded-xl bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
           >
-            Sign in with GitHub
+            Connect GitHub
           </a>
         </div>
       </div>
     );
   }
 
-  // Command palette commands
-  const commands = [
-    {
-      id: 'jobs',
-      label: 'View Jobs',
-      description: 'Navigate to jobs dashboard',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-        </svg>
-      ),
-      onSelect: () => navigate('/jobs'),
-      keywords: ['dashboard', 'queue', 'tasks'],
-    },
-    {
-      id: 'workers',
-      label: 'View Workers',
-      description: 'Navigate to workers page',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      ),
-      onSelect: () => navigate('/workers'),
-      keywords: ['agents', 'processors'],
-    },
-    {
-      id: 'theme',
-      label: 'Toggle Theme',
-      description: 'Switch between light and dark mode',
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-        </svg>
-      ),
-      onSelect: () => {
-        document.body.classList.toggle('theme-dark');
-        showToast('success', 'Theme updated successfully');
-      },
-      keywords: ['dark', 'light', 'appearance'],
-    },
-  ];
-
-  // Floating action button actions
-  const fabActions = [
-    {
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-        </svg>
-      ),
-      label: 'New Job',
-      onClick: () => navigate('/jobs'),
-      variant: 'primary' as const,
-    },
-    {
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-      ),
-      label: 'Search',
-      onClick: () => setIsOpen(true),
-      variant: 'success' as const,
-    },
-    {
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      ),
-      label: 'Settings',
-      onClick: () => navigate('/workers'),
-      variant: 'warning' as const,
-    },
-  ];
-
   return (
-    <>
-      <ParticleBackground />
-      <AppShell
-        appName="DevPilot"
-        navItems={navItemsWithBadges}
-        sidebarFooter={sidebarFooter}
-        breadcrumbs={breadcrumbs}
-        searchPlaceholder="Search jobs, workers, or type: job 42"
-        onSearch={handleGlobalSearch}
-        topBarActions={topBarActions}
-        maxWidth="full"
-      >
-        <Routes>
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/jobs/:id" element={<JobDetail />} />
-          <Route path="/workers" element={<WorkersPage />} />
-          <Route path="*" element={<Navigate replace to="/jobs" />} />
-        </Routes>
-      </AppShell>
-      <FloatingActionButton actions={fabActions} />
-      <CommandPalette commands={commands} isOpen={isOpen} onClose={() => setIsOpen(false)} />
-    </>
-  );
-};
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="md:grid md:grid-cols-[240px_minmax(0,1fr)]">
+        <aside className="hidden md:flex md:h-screen md:flex-col md:sticky md:top-0 border-r border-slate-800 bg-slate-900/70 backdrop-blur">
+          <div className="border-b border-slate-800 px-5 py-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-cyan-300">DevPilot</p>
+            <h2 className="mt-2 text-xl font-semibold text-white">Review Ops</h2>
+            <p className="mt-1 text-xs text-slate-400">Realtime queue control</p>
+          </div>
 
-const App = (): JSX.Element => {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <AppContent />
-      </ToastProvider>
-    </QueryClientProvider>
+          <nav className="px-3 py-4 space-y-2">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  [
+                    'flex items-center justify-between rounded-xl px-3 py-2.5 text-sm transition',
+                    isActive
+                      ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/40'
+                      : 'text-slate-300 hover:bg-slate-800/80 hover:text-white border border-transparent',
+                  ].join(' ')
+                }
+              >
+                <span>{item.label}</span>
+                <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-200">{item.count}</span>
+              </NavLink>
+            ))}
+          </nav>
+
+          <div className="mt-auto border-t border-slate-800 px-4 py-4 space-y-3 text-xs">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-400">Live jobs</p>
+              <p className="mt-1 text-base font-semibold text-cyan-300">{activeJobs}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              <p className="text-slate-400">Workers online</p>
+              <p className="mt-1 text-base font-semibold text-emerald-300">{onlineWorkers} / {workers.length}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-slate-300">
+              <p className="font-semibold text-slate-100">{me.login}</p>
+              <p className="uppercase tracking-[0.12em] text-[10px] text-slate-400">{me.role}</p>
+              <p className="mt-1 break-all text-[10px] text-slate-500">{stripProtocol(apiBase)}</p>
+            </div>
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+            <div className="px-4 py-3 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Realtime Dashboard</p>
+                <h1 className="text-xl font-semibold text-white">{pageTitle}</h1>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3 py-1 text-emerald-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-300 animate-pulse" />
+                  Stream active
+                </span>
+                <span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-slate-300">
+                  API {stripProtocol(apiBase)}
+                </span>
+              </div>
+            </div>
+          </header>
+
+          <main className="px-4 py-5 sm:px-6 lg:px-8 space-y-4">
+            <nav className="md:hidden flex items-center gap-2">
+              {navItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    [
+                      'rounded-lg px-3 py-1.5 text-xs font-medium border',
+                      isActive
+                        ? 'border-cyan-400/50 bg-cyan-500/20 text-cyan-200'
+                        : 'border-slate-700 bg-slate-900 text-slate-300',
+                    ].join(' ')
+                  }
+                >
+                  {item.label} ({item.count})
+                </NavLink>
+              ))}
+            </nav>
+
+            <Routes>
+              <Route path="/jobs" element={<JobsPage />} />
+              <Route path="/jobs/:id" element={<JobDetail />} />
+              <Route path="/workers" element={<WorkersPage />} />
+              <Route path="*" element={<Navigate replace to="/jobs" />} />
+            </Routes>
+          </main>
+        </div>
+      </div>
+    </div>
   );
 };
 

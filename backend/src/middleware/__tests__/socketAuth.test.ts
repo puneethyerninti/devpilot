@@ -28,6 +28,8 @@ const baseConfig: AppConfig = {
 };
 
 describe("socketAuth middleware", () => {
+  type SocketArg = Parameters<ReturnType<typeof verifySocketAuth>>[0];
+
   it("accepts valid JWT in handshake auth token", (done) => {
     const token = jwt.sign({ sub: "u1", role: "operator", login: "alice" }, baseConfig.sessionSecret, {
       issuer: baseConfig.jwtIssuer,
@@ -39,11 +41,12 @@ describe("socketAuth middleware", () => {
         auth: { token },
         headers: {}
       }
-    } as any;
+    } as unknown as SocketArg;
 
     verifySocketAuth(baseConfig)(socket, (err?: Error) => {
       expect(err).toBeUndefined();
-      expect(socket.user?.login).toBe("alice");
+      const socketUser = socket as SocketArg & { user?: { login?: string } };
+      expect(socketUser.user?.login).toBe("alice");
       done();
     });
   });
@@ -54,7 +57,7 @@ describe("socketAuth middleware", () => {
         auth: {},
         headers: {}
       }
-    } as any;
+    } as unknown as SocketArg;
 
     verifySocketAuth(baseConfig)(socket, (err?: Error) => {
       expect(err).toBeInstanceOf(Error);

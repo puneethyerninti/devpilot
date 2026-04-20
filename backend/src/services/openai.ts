@@ -138,6 +138,13 @@ const coerceFinalResult = (text: string, model: string, tokenCount: number, cost
   return { summary, findings: [], model, rawText: text, tokenCount, costCents };
 };
 
+const extractDeltaText = (payload: unknown): string | undefined => {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const choices = (payload as { choices?: Array<{ delta?: { content?: unknown } }> }).choices;
+  const delta = choices?.[0]?.delta?.content;
+  return typeof delta === "string" ? delta : undefined;
+};
+
 export const streamReview = async (config: AppConfig, args: StreamReviewArgs): Promise<FinalReviewResult> => {
   const mode = args.forceLive ? "live" : config.aiMode;
   const enableOpenAi = config.enableOpenAi && envFlag("ENABLE_OPENAI", true);
@@ -198,7 +205,7 @@ export const streamReview = async (config: AppConfig, args: StreamReviewArgs): P
   let emittedProgress = 5;
 
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -214,15 +221,15 @@ export const streamReview = async (config: AppConfig, args: StreamReviewArgs): P
           await args.onChunk?.({ type: "progress", progress: emittedProgress });
           continue;
         }
-        let parsed: any;
+        let parsed: unknown;
         try {
           parsed = JSON.parse(payload);
         } catch {
           continue;
         }
 
-        const delta: string | undefined = parsed?.choices?.[0]?.delta?.content;
-        if (typeof delta === "string" && delta.length) {
+        const delta = extractDeltaText(parsed);
+        if (delta && delta.length) {
           output += delta;
           await args.onChunk?.({ type: "delta", text: delta });
           const nextProgress = Math.min(95, 5 + Math.floor(output.length / 200));

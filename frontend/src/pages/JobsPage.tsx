@@ -1,352 +1,350 @@
-﻿import { useMemo, useState } from 'react';
+﻿import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import StatusBadge from '../components/StatusBadge';
 import Button from '../components/ui/Button';
-import Card from '../components/ui/Card';
-import Badge from '../components/ui/Badge';
-import PageHeader from '../components/ui/PageHeader';
-import EmptyState from '../components/ui/EmptyState';
-import LoadingSpinner from '../components/ui/LoadingSpinner';
-import Skeleton from '../components/ui/Skeleton';
-import AnimatedStatCard from '../components/ui/AnimatedStatCard';
-import Tabs from '../components/ui/Tabs';
-import SearchBar from '../components/ui/SearchBar';
-import ProgressBar from '../components/ui/ProgressBar';
-import AnimatedCounter from '../components/ui/AnimatedCounter';
 import { useJobsQuery, useMeQuery, useRunJob } from '../lib/api';
+
+type StatusFilter = 'all' | 'queued' | 'processing' | 'running' | 'reviewed' | 'done' | 'failed';
+
+const FINAL_STATUSES = new Set(['done', 'reviewed', 'posted', 'completed']);
+const LIVE_STATUSES = new Set(['queued', 'processing', 'running']);
+
+const toCanonicalStatus = (status?: string) => (status ?? 'queued').toLowerCase();
+
+const progressFor = (status: string, explicit?: number) => {
+  if (typeof explicit === 'number') return Math.max(0, Math.min(100, explicit));
+  if (FINAL_STATUSES.has(status)) return 100;
+  if (status === 'failed') return 100;
+  if (status === 'queued') return 8;
+  if (status === 'processing' || status === 'running') return 58;
+  return 0;
+};
+
+const formatRelativeTime = (isoDate: string, nowMs: number) => {
+  const diffSeconds = Math.max(0, Math.floor((nowMs - new Date(isoDate).getTime()) / 1000));
+  if (diffSeconds < 10) return 'just now';
+  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+  if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m ago`;
+  if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)}h ago`;
+  return `${Math.floor(diffSeconds / 86400)}d ago`;
+};
 
 const JobsPage = (): JSX.Element => {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<'all' | 'queued' | 'processing' | 'done' | 'failed'>('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const { data: jobs, isLoading, isError, refetch } = useJobsQuery({ status: filter === 'all' ? undefined : filter });
   const { data: me } = useMeQuery();
+  const { data: jobs = [], isLoading, isError, isFetching, refetch } = useJobsQuery({});
   const { mutate: runJob, isPending: isCreatingJob } = useRunJob();
 
-  const openCreateJobPrompt = () => {
-    const repo = window.prompt('Repository (owner/repo)');
-    if (!repo) return;
-    const prNumberRaw = window.prompt('Pull request number');
-    if (!prNumberRaw) return;
-    const headSha = window.prompt('Head SHA (commit hash)');
-    if (!headSha) return;
-    const installationIdRaw = window.prompt('GitHub installation ID (required for live review)');
-    if (!installationIdRaw) return;
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [search, setSearch] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const [form, setForm] = useState({
+    repo: '',
+    prNumber: '',
+    installationId: '',
+  });
 
-    const prNumber = Number(prNumberRaw);
-    const installationId = Number(installationIdRaw);
-
-    if (!Number.isInteger(prNumber) || prNumber <= 0) {
-      window.alert('Invalid pull request number.');
-      return;
-    }
-
-    if (!Number.isInteger(installationId) || installationId <= 0) {
-      window.alert('Invalid installation ID.');
-      return;
-    }
-
-    runJob(
-      { repo, prNumber, headSha, installationId },
-      {
-        onError: () => {
-          window.alert('Failed to create job. Check your role and payload values.');
-        }
-      }
-    );
-  };
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const normalizedJobs = useMemo(() => {
-    return (jobs ?? []).map((job) => {
-      const repoFullName = typeof job.repoFullName === 'string' && job.repoFullName.trim().length > 0
-        ? job.repoFullName
-        : 'unknown/repository';
-
-      return {
+    return [...jobs]
+      .map((job) => ({
         ...job,
-        repoFullName,
-      };
-    });
+        canonicalStatus: toCanonicalStatus(job.uiStatus ?? job.status),
+        repoFullName:
+          typeof job.repoFullName === 'string' && job.repoFullName.trim().length > 0
+            ? job.repoFullName
+            : 'unknown/repository',
+      }))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [jobs]);
 
   const filteredJobs = useMemo(() => {
-    if (!jobs) return [];
-    let result = normalizedJobs;
-    
-    if (filter !== 'all') {
-      result = result.filter((job) => job.status === filter);
-    }
-    
-    if (searchQuery) {
-      result = result.filter((job) =>
-        job.repoFullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.prNumber?.toString().includes(searchQuery)
+    const query = search.trim().toLowerCase();
+    return normalizedJobs.filter((job) => {
+      if (statusFilter !== 'all' && job.canonicalStatus !== statusFilter) return false;
+      if (!query) return true;
+      return (
+        job.repoFullName.toLowerCase().includes(query) ||
+        String(job.id).includes(query) ||
+        String(job.prNumber ?? '').includes(query)
       );
-    }
-    
-    return result;
-  }, [jobs, normalizedJobs, filter, searchQuery]);
+    });
+  }, [normalizedJobs, search, statusFilter]);
 
   const stats = useMemo(() => {
-    const base = { total: normalizedJobs.length, queued: 0, processing: 0, done: 0, failed: 0, avgRisk: 0 };
-    if (!normalizedJobs.length) return base;
+    const result = {
+      total: normalizedJobs.length,
+      live: 0,
+      done: 0,
+      failed: 0,
+      avgRisk: 0,
+    };
     let riskSum = 0;
     let riskCount = 0;
+
     normalizedJobs.forEach((job) => {
-      const key = job.status as keyof typeof base;
-      if (key in base) base[key] += 1;
+      if (LIVE_STATUSES.has(job.canonicalStatus)) result.live += 1;
+      if (FINAL_STATUSES.has(job.canonicalStatus)) result.done += 1;
+      if (job.canonicalStatus === 'failed') result.failed += 1;
       if (typeof job.riskScore === 'number') {
         riskSum += job.riskScore;
         riskCount += 1;
       }
     });
-    base.avgRisk = riskCount ? Number((riskSum / riskCount).toFixed(2)) : 0;
-    return base;
+
+    result.avgRisk = riskCount > 0 ? Number((riskSum / riskCount).toFixed(2)) : 0;
+    return result;
   }, [normalizedJobs]);
 
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'queued': return 'warning';
-      case 'processing': return 'primary';
-      case 'done': return 'success';
-      case 'failed': return 'danger';
-      default: return 'default';
+  const handleCreate = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const repo = form.repo.trim();
+    const prNumber = Number(form.prNumber);
+    const installationId = form.installationId ? Number(form.installationId) : undefined;
+
+    if (!/^.+\/.+$/.test(repo)) {
+      window.alert('Repository must be in owner/repo format.');
+      return;
     }
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      window.alert('Pull request number must be a positive integer.');
+      return;
+    }
+    if (form.installationId && (!Number.isInteger(installationId) || (installationId ?? 0) <= 0)) {
+      window.alert('Installation ID must be a positive integer.');
+      return;
+    }
+
+    runJob(
+      { repo, prNumber, installationId },
+      {
+        onSuccess: () => {
+          setShowCreate(false);
+          setForm({ repo: '', prNumber: '', installationId: '' });
+        },
+        onError: (error) => {
+          const responseError = (error as { response?: { data?: { error?: string } } })?.response?.data?.error;
+          window.alert(responseError ?? 'Could not start review job. Check permissions and payload values.');
+        },
+      },
+    );
   };
 
-  const tabs = [
-    { id: 'all', label: 'All Jobs', badge: stats.total },
-    { id: 'queued', label: 'Queued', badge: stats.queued },
-    { id: 'processing', label: 'Processing', badge: stats.processing },
-    { id: 'done', label: 'Completed', badge: stats.done },
-    { id: 'failed', label: 'Failed', badge: stats.failed },
-  ];
-
-  const completionRate = stats.total > 0 ? (stats.done / stats.total) * 100 : 0;
-
   return (
-    <div className="space-y-6">
-      {/* Page Header with Search */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <PageHeader
-          title="Job Control Room"
-          subtitle="Real-time queue, risk signals, and worker handoffs"
-        />
-        <Button
-          variant="primary"
-          size="md"
-          className="glass-strong shadow-lg hover:shadow-xl"
-          onClick={openCreateJobPrompt}
-          disabled={me?.role !== 'admin' || isCreatingJob}
-        >
-          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-          </svg>
-          {isCreatingJob ? 'Creating...' : 'New Job'}
-        </Button>
-      </div>
-
-      {/* Premium Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <AnimatedStatCard
-          title="Total Jobs"
-          value={<AnimatedCounter value={stats.total} />}
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          }
-          color="blue"
-          subtitle="All time jobs"
-        />
-
-        <AnimatedStatCard
-          title="Processing"
-          value={<AnimatedCounter value={stats.processing} />}
-          icon={
-            <div className="animate-spin">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </div>
-          }
-          color="primary"
-          trend={{ value: 12, isPositive: true }}
-          subtitle="Currently active"
-        />
-
-        <AnimatedStatCard
-          title="Completed"
-          value={<AnimatedCounter value={stats.done} />}
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-          color="success"
-          trend={{ value: 8, isPositive: true }}
-          subtitle={`${completionRate.toFixed(0)}% success rate`}
-        />
-
-        <AnimatedStatCard
-          title="Avg Risk Score"
-          value={stats.avgRisk}
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          }
-          color="warning"
-          subtitle="Risk assessment"
-        />
-      </div>
-
-      {/* Progress Overview */}
-      <Card variant="elevated" className="glass-card">
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-text-primary">Overall Progress</h3>
-          <ProgressBar
-            value={completionRate}
-            variant="gradient"
-            size="lg"
-            showLabel
-            label="Completion Rate"
-            animated
-          />
-          <div className="grid grid-cols-3 gap-4 pt-2">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-primary">
-                <AnimatedCounter value={stats.queued} />
-              </p>
-              <p className="text-xs text-text-secondary">Queued</p>
-            </div>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-warning">
-                <AnimatedCounter value={stats.processing} />
-              </p>
-              <p className="text-xs text-text-secondary">Processing</p>
-            </div>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-success">
-                <AnimatedCounter value={stats.done} />
-              </p>
-              <p className="text-xs text-text-secondary">Done</p>
-            </div>
+    <section className="space-y-5">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Queue Operations</p>
+            <h2 className="mt-1 text-2xl font-semibold text-white">Live Review Queue</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Realtime status flow from queued to reviewed with progress and risk visibility.
+            </p>
           </div>
-        </div>
-      </Card>
-
-      {/* Search Bar */}
-      <SearchBar
-        placeholder="Search jobs by repository or PR number..."
-        onSearch={setSearchQuery}
-        variant="glass"
-        size="lg"
-      />
-
-      {isError && (
-        <Card variant="outline">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-text-primary">Couldn’t load jobs right now</p>
-              <p className="text-xs text-text-secondary">Please check backend connectivity and try refreshing.</p>
-            </div>
-            <Button variant="secondary" size="sm" onClick={() => refetch()}>
-              Retry
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => refetch()} disabled={isFetching}>
+              {isFetching ? 'Refreshing...' : 'Refresh'}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => setShowCreate((prev) => !prev)}
+              disabled={me?.role !== 'admin'}
+            >
+              {showCreate ? 'Close Form' : 'New Review Job'}
             </Button>
           </div>
-        </Card>
+        </div>
+      </div>
+
+      {showCreate && (
+        <form onSubmit={handleCreate} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:p-6">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <label className="space-y-1 text-xs text-slate-300">
+              Repository (owner/repo)
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                value={form.repo}
+                onChange={(event) => setForm((prev) => ({ ...prev, repo: event.target.value }))}
+                placeholder="acme/platform"
+                required
+              />
+            </label>
+            <label className="space-y-1 text-xs text-slate-300">
+              Pull Request Number
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                value={form.prNumber}
+                onChange={(event) => setForm((prev) => ({ ...prev, prNumber: event.target.value }))}
+                placeholder="42"
+                required
+              />
+            </label>
+            <label className="space-y-1 text-xs text-slate-300">
+              Installation ID (optional)
+              <input
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+                value={form.installationId}
+                onChange={(event) => setForm((prev) => ({ ...prev, installationId: event.target.value }))}
+                placeholder="12345678"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button type="submit" variant="primary" loading={isCreatingJob}>
+              Start Review Job
+            </Button>
+            <p className="text-xs text-slate-400">Head SHA is auto-resolved from the selected PR. Only admin users can trigger jobs from UI.</p>
+          </div>
+        </form>
       )}
 
-      {/* Tabs for Filtering */}
-      <Tabs
-        tabs={tabs}
-        defaultTab={filter}
-        onChange={(tabId) => setFilter(tabId as typeof filter)}
-        variant="pills"
-        size="md"
-      >
-        {(activeTab) => (
-          <Card variant="elevated" className="glass-card" contentClassName="p-4 sm:p-5">
-            {isLoading ? (
-              <div className="space-y-4">
-                {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className={`flex items-center space-x-4 p-4 animate-fadeInUp stagger-${Math.min(i+1,5)}`}>
-                    <Skeleton className="h-12 w-12 rounded-full" />
-                    <div className="space-y-2 flex-1">
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-3 w-1/2" />
-                    </div>
-                    <Skeleton className="h-6 w-20" />
-                  </div>
-                ))}
-              </div>
-            ) : filteredJobs.length === 0 ? (
-              <EmptyState
-                icon={
-                  <svg className="w-12 h-12 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                }
-                title="No jobs found"
-                description={searchQuery ? "No jobs match your search query." : filter === 'all' ? "No jobs have been created yet." : `No jobs with status "${filter}".`}
-                actionLabel="Create First Job"
-                onAction={openCreateJobPrompt}
-              />
-            ) : (
-              <div className="space-y-3">
-                {filteredJobs.map((job, index) => (
-                  <div
-                    key={job.id}
-                    className={`group flex items-center justify-between p-4 rounded-lg border border-border 
-                      glass hover:glass-strong cursor-pointer transition-all duration-300 
-                      hover:shadow-lg hover:-translate-y-0.5 animate-fadeInUp stagger-${(index % 5) + 1}`}
-                    onClick={() => navigate(`/jobs/${job.id}`)}
-                  >
-                    <div className="flex items-center space-x-4 flex-1">
-                      <div className="flex-shrink-0">
-                        <div className="h-12 w-12 rounded-xl bg-gradient-primary flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                          <span className="text-lg font-bold text-white">
-                            {job.repoFullName.split('/')[0]?.charAt(0)?.toUpperCase() || '?'}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-text-primary truncate group-hover:text-primary transition-colors">
-                          {job.repoFullName}
-                        </p>
-                        <p className="text-xs text-text-secondary flex items-center gap-2">
-                          {job.prNumber && (
-                            <>
-                              <span className="font-medium">PR #{job.prNumber}</span>
-                              <span>•</span>
-                            </>
-                          )}
-                          <span>{new Date(job.createdAt).toLocaleDateString()}</span>
-                        </p>
-                      </div>
-                    </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Total</p>
+          <p className="mt-1 text-2xl font-semibold text-white">{stats.total}</p>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Live</p>
+          <p className="mt-1 text-2xl font-semibold text-cyan-300">{stats.live}</p>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Reviewed</p>
+          <p className="mt-1 text-2xl font-semibold text-emerald-300">{stats.done}</p>
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Avg Risk</p>
+          <p className="mt-1 text-2xl font-semibold text-amber-300">{stats.avgRisk}</p>
+        </div>
+      </div>
 
-                    <div className="flex items-center space-x-3">
-                      {job.riskScore !== undefined && (
-                        <Badge variant={job.riskScore > 7 ? 'danger' : job.riskScore > 4 ? 'warning' : 'success'}>
-                          Risk: {job.riskScore}
-                        </Badge>
-                      )}
-                      <Badge variant={getStatusBadgeVariant(job.uiStatus ?? job.status)}>
-                        {job.uiStatus ?? job.status}
-                      </Badge>
-                      <svg className="w-5 h-5 text-text-tertiary group-hover:text-primary group-hover:translate-x-1 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 overflow-hidden">
+        <div className="border-b border-slate-800 px-4 py-3 sm:px-5 sm:py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            {(['all', 'queued', 'processing', 'running', 'reviewed', 'done', 'failed'] as StatusFilter[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setStatusFilter(value)}
+                className={[
+                  'rounded-lg border px-2.5 py-1 text-xs font-medium transition',
+                  statusFilter === value
+                    ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200'
+                    : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500',
+                ].join(' ')}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search by repo, job id, or PR"
+            className="w-full lg:w-72 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+          />
+        </div>
+
+        {isError && (
+          <div className="mx-4 my-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 sm:mx-5">
+            Unable to load jobs right now. Check backend connectivity, then refresh.
+          </div>
         )}
-      </Tabs>
-    </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-800 text-sm">
+            <thead className="bg-slate-950/70 text-xs uppercase tracking-[0.12em] text-slate-400">
+              <tr>
+                <th className="px-4 py-3 text-left">Job</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-left">Progress</th>
+                <th className="px-4 py-3 text-left">Risk</th>
+                <th className="px-4 py-3 text-left">Updated</th>
+                <th className="px-4 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {isLoading && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                    Loading queue state...
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && filteredJobs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                    No jobs match the current filters.
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && filteredJobs.map((job) => {
+                const progress = progressFor(job.canonicalStatus, job.progress);
+                const isLive = LIVE_STATUSES.has(job.canonicalStatus);
+                const riskColor =
+                  typeof job.riskScore !== 'number'
+                    ? 'text-slate-300'
+                    : job.riskScore > 7
+                      ? 'text-rose-300'
+                      : job.riskScore > 4
+                        ? 'text-amber-300'
+                        : 'text-emerald-300';
+
+                return (
+                  <tr key={job.id} className="hover:bg-slate-800/40 transition">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-100">#{job.id} {job.repoFullName}</p>
+                      <p className="text-xs text-slate-400">PR #{job.prNumber ?? 'n/a'}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <StatusBadge status={job.canonicalStatus} />
+                        {isLive && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-cyan-200">
+                            <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 animate-pulse" />
+                            Live
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <progress
+                          max={100}
+                          value={progress}
+                          className="h-2 w-28 overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-slate-800 [&::-webkit-progress-value]:bg-gradient-to-r [&::-webkit-progress-value]:from-cyan-500 [&::-webkit-progress-value]:to-emerald-400 [&::-moz-progress-bar]:bg-cyan-500"
+                        />
+                        <span className="text-xs text-slate-300">{progress}%</span>
+                      </div>
+                    </td>
+                    <td className={`px-4 py-3 font-semibold ${riskColor}`}>
+                      {typeof job.riskScore === 'number' ? job.riskScore.toFixed(2) : 'n/a'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-slate-200">{formatRelativeTime(job.updatedAt, now)}</p>
+                      <p className="text-xs text-slate-500">{new Date(job.updatedAt).toLocaleString()}</p>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Button variant="secondary" size="sm" onClick={() => navigate(`/jobs/${job.id}`)}>
+                        View
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 };
 

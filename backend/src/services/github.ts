@@ -12,18 +12,25 @@ export type GitHubReviewComment = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+type RateLimitErrorShape = {
+  status?: number;
+  headers?: Record<string, string | number | undefined>;
+  response?: {
+    status?: number;
+    headers?: Record<string, string | number | undefined>;
+  };
+};
+
 const withRateLimitRetry = async <T>(fn: () => Promise<T>, opts?: { maxRetries?: number }) => {
   const maxRetries = opts?.maxRetries ?? 3;
-  let attempt = 0;
-  while (true) {
+  for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      attempt++;
-      const anyErr = err as any;
-      const retryAfterHeader = anyErr?.response?.headers?.["retry-after"] ?? anyErr?.headers?.["retry-after"];
-      const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-      const status = anyErr?.status ?? anyErr?.response?.status;
+      const errorLike = err as RateLimitErrorShape;
+      const retryAfterHeader = errorLike.response?.headers?.["retry-after"] ?? errorLike.headers?.["retry-after"];
+      const retryAfterSeconds = typeof retryAfterHeader === "number" || typeof retryAfterHeader === "string" ? Number(retryAfterHeader) : Number.NaN;
+      const status = errorLike.status ?? errorLike.response?.status;
 
       if (attempt > maxRetries || !(status === 403 || status === 429) || !Number.isFinite(retryAfterSeconds)) {
         throw err;
@@ -64,19 +71,16 @@ export const postReviewCommentsWithOctokit = async (
 ) => {
   if (!params.comments.length) return;
 
-  const { data: pr } = await withRateLimitRetry(() =>
-    (githubApiRequestsTotal.inc({ operation: "pulls.get" }),
-    octokit.pulls.get({ owner: params.owner, repo: params.repo, pull_number: params.prNumber })
-    )
-  );
-  const commitId = (pr as any)?.head?.sha as string | undefined;
+  githubApiRequestsTotal.inc({ operation: "pulls.get" });
+  const { data: pr } = await withRateLimitRetry(() => octokit.pulls.get({ owner: params.owner, repo: params.repo, pull_number: params.prNumber }));
+  const commitId = pr.head?.sha;
   if (!commitId) {
     throw new Error("Unable to determine commit SHA for pull request");
   }
 
   for (const comment of params.comments) {
+    githubApiRequestsTotal.inc({ operation: "pulls.createReviewComment" });
     await withRateLimitRetry(() =>
-      (githubApiRequestsTotal.inc({ operation: "pulls.createReviewComment" }),
       octokit.pulls.createReviewComment({
         owner: params.owner,
         repo: params.repo,
@@ -89,7 +93,6 @@ export const postReviewCommentsWithOctokit = async (
         side: "RIGHT",
         body: comment.body
       })
-      )
     );
   }
 };
